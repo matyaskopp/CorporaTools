@@ -52,6 +52,7 @@ public class LvtbRoles
 	public final static String INS = "ins";
 	public final static String DIRSP = "dirSp";
 
-
-
+	// other
+	public final static String REPEAT = "repeat";
+	public final static String ELLIPSIS_TOKEN = "ellipsisTok";
 }

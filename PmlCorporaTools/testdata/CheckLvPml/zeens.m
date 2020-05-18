@@ -142,19 +142,19 @@
     </m>
   </s>
   <s id="m-zeens-p5s1">
-    <m id="m-zeens-p5s1w1">
-      <src.rf>experimental</src.rf>
-      <w.rf>w#w-zeens-p5w1</w.rf>
-      <form>Zēns</form>
-      <lemma>zēns</lemma>
-      <tag>ncmsn1</tag>
-    </m>
     <m id="m-zeens-p5s1w2">
       <src.rf>experimental</src.rf>
       <w.rf>w#w-zeens-p5w2</w.rf>
       <form>ātri</form>
       <lemma>ātri</lemma>
       <tag>rpt</tag>
+    </m>
+    <m id="m-zeens-p5s1w1">
+      <src.rf>experimental</src.rf>
+      <w.rf>w#w-zeens-p5w1</w.rf>
+      <form>Zēns</form>
+      <lemma>zēns</lemma>
+      <tag>ncmsn1</tag>
     </m>
     <m id="m-zeens-p5s1w3">
       <src.rf>experimental</src.rf>
@@ -828,18 +828,18 @@
       <lemma>"</lemma>
       <tag>zq</tag>
     </m>
-    <m id="m-zeens-p14s2w5">
-      <src.rf>experimental</src.rf>
-      <form>Gan jau</form>
-      <lemma>gan jau</lemma>
-      <tag>qc</tag>
-    </m>
     <m id="m-zeens-p14s2w6">
       <src.rf>experimental</src.rf>
       <w.rf>w#w-zeens-p14w29</w.rf>
       <form>būs</form>
       <lemma>būt</lemma>
       <tag>vcnifii30an</tag>
+    </m>
+    <m id="m-zeens-p14s2w5">
+      <src.rf>experimental</src.rf>
+      <form>Gan jau</form>
+      <lemma>gan jau</lemma>
+      <tag>qc</tag>
     </m>
     <m id="m-zeens-p14s2w7">
       <src.rf>experimental</src.rf>

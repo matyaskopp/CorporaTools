@@ -3,7 +3,7 @@ package lv.ailab.lvtb.universalizer.transformator.syntax;
 import lv.ailab.lvtb.universalizer.conllu.UDv2Feat;
 import lv.ailab.lvtb.universalizer.conllu.UDv2Relations;
 import lv.ailab.lvtb.universalizer.pml.*;
-import lv.ailab.lvtb.universalizer.utils.Logger;
+import lv.ailab.lvtb.universalizer.transformator.StandardLogger;
 import lv.ailab.lvtb.universalizer.utils.Tuple;
 
 import java.util.List;
@@ -19,48 +19,28 @@ import java.util.regex.Pattern;
 public class DepRelLogic
 {
 	/**
-	 * Where all warnings goes.
-	 */
-	protected Logger logger;
-
-	public DepRelLogic(Logger logger)
-	{
-		this.logger = logger;
-	}
-
-	/*
-	 * Generic relation between LVTB dependency roles and UD DEPREL.
-	 * @param aNode		node for which UD DEPREL should be obtained
-	 * @param enhanced  true, if role for enhanced dependency tree is needed
-	 * @param warnOut	where all warnings goes
-	 * @return	UD DEPREL (including orphan, if parent is reduction and node is
-	 * 			representing a core argument).
-	 * @throws XPathExpressionException	unsuccessfull XPathevaluation (anywhere
-	 * 									in the PML tree) most probably due to
-	 * 									algorithmical error.
-	 */
-	/*public UDv2Relations depToUD(Node aNode, boolean enhanced, PrintWriter warnOut)
-			throws XPathExpressionException
-	{
-		return depToUD(aNode, aNode, enhanced, warnOut);
-	}//*/
-
-	/**
 	 * Generic relation between LVTB dependency roles and UD DEPREL.
 	 * @param node		node for which UD DEPREL should be obtained (use this
 	 *                  node's placement, role, tag and lemma)
+	 * @param isEligibleForOrphan	is this node to become a child for a core
+	 *                              argument or adjunct elevated instead of
+	 *                              ellipted predicate? (basically true if
+	 *                              EllipsisLogic.newParent() said so)
 	 * @return	UD DEPREL (including orphan, if parent is reduction and node is
 	 * 			representing a core argument).
 	 */
-	public UDv2Relations depToUDBase(PmlANode node)
+	public static UDv2Relations depToUDBase(PmlANode node, boolean isEligibleForOrphan)
 	{
 		PmlANode pmlParent = node.getParent();
 		String lvtbRole = node.getRole();
 		UDv2Relations prelaminaryRole = depToUDLogic(node, pmlParent, lvtbRole).first;
 		if (prelaminaryRole == UDv2Relations.DEP)
 			warnOnRole(node, pmlParent, lvtbRole, false);
+		if (isEligibleForOrphan && canBecomeOrphan(prelaminaryRole))
+			return UDv2Relations.ORPHAN;
+		else return prelaminaryRole;
 
-		PmlANode pmlEffParent = node.getEffectiveAncestor();
+		/*PmlANode pmlEffParent = node.getEffectiveAncestor();
 		if ((pmlParent.isPureReductionNode() || pmlEffParent.isPureReductionNode())
 				&& (prelaminaryRole.equals(UDv2Relations.NSUBJ)
 					|| prelaminaryRole.equals(UDv2Relations.NSUBJ_PASS)
@@ -71,7 +51,7 @@ public class DepRelLogic
 					|| prelaminaryRole.equals(UDv2Relations.CCOMP)
 					|| prelaminaryRole.equals(UDv2Relations.XCOMP)))
 			return UDv2Relations.ORPHAN;
-		return prelaminaryRole;
+		return prelaminaryRole;*/
 	}
 
 	/**
@@ -82,7 +62,7 @@ public class DepRelLogic
 	 * @return	UD dependency role and enhanced depency role postfix, if such is
 	 * 			needed.
 	 */
-	public Tuple<UDv2Relations, String> depToUDEnhanced(PmlANode node)
+	public static Tuple<UDv2Relations, String> depToUDEnhanced(PmlANode node)
 	{
 		return depToUDEnhanced(
 				node, node.getParent(), node.getRole());
@@ -98,12 +78,13 @@ public class DepRelLogic
 	 * @return	UD dependency role and enhanced depency role postfix, if such is
 	 * 			needed.
 	 */
-	public Tuple<UDv2Relations, String> depToUDEnhanced(
+	public static Tuple<UDv2Relations, String> depToUDEnhanced(
 			PmlANode node, PmlANode parent, String lvtbRole)
 	{
 		Tuple<UDv2Relations, String> res = depToUDLogic(node, parent, lvtbRole);
 		if (res.first == null || UDv2Relations.DEP.equals(res.first))
 			warnOnRole(node, parent, lvtbRole,true);
+		//System.out.println("Enh. child: " + node.getId() + ", enh. parent: " + parent.getId() + " -> " + res.first);
 		return res;
 	}
 
@@ -117,10 +98,11 @@ public class DepRelLogic
 	 * @return	UD dependency role and enhanced depency role postfix, if such is
 	 * 			needed.
 	 */
-	public Tuple<UDv2Relations, String> depToUDLogic(
+	public static Tuple<UDv2Relations, String> depToUDLogic(
 			PmlANode node, PmlANode parent, String lvtbRole)
 	{
 		// Simple dependencies.
+
 		switch (lvtbRole)
 		{
 			case LvtbRoles.SUBJ : return subjToUD(node, parent);
@@ -156,127 +138,107 @@ public class DepRelLogic
 			// Semi-clausal dependencies.
 			case LvtbRoles.INS : return insToUD(node, parent);
 			case LvtbRoles.DIRSP : return Tuple.of(UDv2Relations.PARATAXIS, null);
+
+			// Other
+			// TODO wait for answer in https://github.com/UniversalDependencies/docs/issues/594
+			case LvtbRoles.REPEAT : return Tuple.of(UDv2Relations.REPARANDUM, null);
+			case LvtbRoles.ELLIPSIS_TOKEN: return ellipsisTokToUD(node, parent);
 			default : return Tuple.of(UDv2Relations.DEP, null);
 		}
 	}
 
-	public Tuple<UDv2Relations, String> subjToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> subjToUD(PmlANode node, PmlANode parent)
 	{
 		String tag = node.getAnyTag();
-		// Nominal++ subject
-		// This procesing is somewhat tricky: it is allowed for nsubj and
-		// nsubjpas to be [rci].*, but it is not allowed for nmod.
+		UDv2Relations resRoleActive;
+		UDv2Relations resRolePasive;
+
+		// First: is this nominal or clausal subject?
 		if (tag.matches("[nampxy].*|v..pd.*|[rci].*|y[npa].*]"))
 		{
-			String parentTag = parent.getAnyTag();
-			String parentEffType = parent.getEffectiveLabel();
-			PmlANode pmlEffAncestor = parent.getThisOrEffectiveAncestor();
-			// Hopefully either parent or effective ancestor is tagged as verb
-			// or xPred.
-			PmlANode parentXChild = parent.getPhraseNode();
-			String parentXChildType = parentXChild == null ? null : parentXChild.getPhraseType();
-			PmlANode ancXChild = pmlEffAncestor.getPhraseNode();
-			String ancXChildType = ancXChild == null ? null : ancXChild.getPhraseType();
+			resRoleActive = UDv2Relations.NSUBJ;
+			resRolePasive = UDv2Relations.NSUBJ_PASS;
+		}
+		else if (tag.matches("v..n.*"))
+		{
+			resRoleActive = UDv2Relations.CSUBJ;
+			resRolePasive = UDv2Relations.CSUBJ_PASS;
+		}
+		else return Tuple.of(UDv2Relations.DEP, null);
 
-			// Parent is predicate
-			if (parentEffType.equals(LvtbRoles.PRED))
+		// Second: is parent active or passive?
+
+		// Here we get nodes that will tell us if parent is pred or xPred
+		String parentTag = parent.getAnyTag();
+		String parentEffType = parent.getEffectiveLabel();
+		PmlANode parentXChild = parent.getPhraseNode();
+		String parentXChildType = parentXChild == null ? null : parentXChild.getPhraseType();
+
+		PmlANode pmlEffAncestor = parent.getThisOrEffectiveAncestor();
+		String effAncestorType = pmlEffAncestor.getEffectiveLabel();
+		PmlANode ancXChild = pmlEffAncestor.getPhraseNode();
+		String ancXChildType = ancXChild == null ? null : ancXChild.getPhraseType();
+
+		// But if parent is basElem, we need to know, if grandparent is spc
+		PmlANode pmlEffAncestor2 = pmlEffAncestor.getThisOrEffectiveAncestor();
+		String effAncestorType2 = pmlEffAncestor2.getEffectiveLabel();
+
+		boolean isParentRealVerbal = effAncestorType.equals(LvtbRoles.PRED)
+				|| effAncestorType.equals(LvtbRoles.SPC)
+				|| (effAncestorType.equals(LvtbRoles.BASELEM)
+				&& effAncestorType2.equals(LvtbRoles.SPC));
+		boolean isParentOtherBasElem = parentEffType.equals(LvtbRoles.BASELEM);
+
+		if (!isParentRealVerbal && !isParentOtherBasElem)
+			return Tuple.of(UDv2Relations.DEP, null);
+
+		// Parent is complex predicate something
+		if (LvtbXTypes.XPRED.equals(parentXChildType) ||
+				LvtbXTypes.XPRED.equals(ancXChildType))
+		{
+			if (parentTag.matches("v..[^p].....p.*|v..pd...p.*|v[^\\[]*\\[pas.*"))
+				return Tuple.of(resRolePasive, null);
+			if (parentTag.matches("v.*") && isParentRealVerbal ||
+					parentTag.matches("v..[^pn].....a.*|v[^\\[]+\\[(act|subst|ad[jv]|pronom).*"))
+				return Tuple.of(resRoleActive, null);
+
+			String ancestorTag = pmlEffAncestor.getAnyTag();
+			if (ancestorTag.matches("v..[^p].....p.*|v..pd...p.*|v[^\\[]*\\[pas.*"))
+				return Tuple.of(resRolePasive, null);
+			if (ancestorTag.matches("v.*") && isParentRealVerbal ||
+					parentTag.matches("v..[^pn].....a.*|v[^\\[]+\\[(act|subst|ad[jv]|pronom).*"))
+				return Tuple.of(resRoleActive, null);
+		}
+
+		// Parent is simple predicate/spc/basElem
+		else
+		{
+			if (parentTag.matches("v..[^p].....p.*|v..pd...p.*"))
+				return Tuple.of(resRolePasive, null);
+			//if (parentTag.matches("v..[^p].....a.*|v..pd...a.*|v..pu.*|v..n.*"))
+			if (parentTag.matches("v.*"))
+				return Tuple.of(resRoleActive, null);
+
+			String reduction = parent.getReduction();
+			if (reduction != null && !reduction.isEmpty())
 			{
-				// Parent is complex predicate
-				if (LvtbXTypes.XPRED.equals(parentXChildType) ||
-						LvtbXTypes.XPRED.equals(ancXChildType))
-				{
-					if (parentTag.matches("v..[^p].....p.*|v[^\\[]*\\[pas.*")) return Tuple.of(UDv2Relations.NSUBJ_PASS, null);
-					if (parentTag.matches("v.*")) return Tuple.of(UDv2Relations.NSUBJ, null);
-					String ancestorTag = pmlEffAncestor.getAnyTag();
-					if (ancestorTag.matches("v..[^p].....p.*|v[^\\[]*\\[pas.*")) return Tuple.of(UDv2Relations.NSUBJ_PASS, null);
-					if (ancestorTag.matches("v.*")) return Tuple.of(UDv2Relations.NSUBJ, null);
-
-				}
-				// Parent is simple predicate
-				else
-				{
-					// TODO: check the data if participles is realy appropriate here.
-					if (parentTag.matches("v..[^p].....a.*|v..pd...a.*|v..pu.*|v..n.*"))
-					//if (parentTag.matches("v..[^p].....a.*"))
-						return Tuple.of(UDv2Relations.NSUBJ, null);
-					if (parentTag.matches("v..[^p].....p.*|v..pd...p.*"))
-					//if (parentTag.matches("v..[^p].....p.*"))
-						return Tuple.of(UDv2Relations.NSUBJ_PASS, null);
-					String reduction = parent.getReduction();
-					//if (parentTag.matches("z.*"))
-					if (reduction != null && !reduction.isEmpty())
-					{
-						if (reduction.matches("v..[^pn].....[a0].*|v..pd...[a0].*|v..pu.*|v..n.*"))
-							return Tuple.of(UDv2Relations.NSUBJ, null);
-						if (reduction.matches("v..[^p].....p.*|v..pd...p.*"))
-							return Tuple.of(UDv2Relations.NSUBJ_PASS, null);
-						//if (reduction.matches("v..n.*"))
-						//	return  URelations.NMOD;
-					}
-				}
-			}
-
-			// SPC subject, subject subject ("vienam cīnīties ir grūtāk")
-			else if ((LvtbRoles.SPC.equals(parentEffType) || LvtbRoles.SUBJ.equals(parentEffType))
-					&& !tag.matches("[rci].*|yr.*]"))
-			{
-				Matcher m = Pattern.compile("([na]...|[mp]....|v..pd..)(.).*").matcher(tag);
-				if (m.matches())
-				{
-					String caseLetter = m.group(2);
-					String caseString = UDv2Feat.caseLetterToLCString(caseLetter);
-					if (caseString != null || caseLetter.equals("0") || caseLetter.equals("_"))
-						return Tuple.of(UDv2Relations.OBL, caseString);
-				}
-				if (tag.matches("[x].*"))
-					return Tuple.of(UDv2Relations.OBL, null);
-			}
-
-			// Parent is basElem of some phrase
-			else if (parentEffType.equals(LvtbRoles.BASELEM))
-			{
-				// Parent is complex predicate
-				if (LvtbXTypes.XPRED.equals(parentXChildType) ||
-						LvtbXTypes.XPRED.equals(ancXChildType))
-				{
-					if (parentTag.matches("v..[^pn].....p.*|v[^\\[]+\\[pas.*")) return Tuple.of(UDv2Relations.NSUBJ_PASS, null);
-					if (parentTag.matches("v..[^pn].....a.*|v[^\\[]+\\[(act|subst|ad[jv]|pronom).*")) return Tuple.of(UDv2Relations.NSUBJ, null);
-					String ancestorTag = pmlEffAncestor.getAnyTag();
-					if (ancestorTag.matches("v..[^pn].....p.*|v[^\\[]+\\[pas.*")) return Tuple.of(UDv2Relations.NSUBJ_PASS, null);
-					if (ancestorTag.matches("v..[^pn].....a.*|v[^\\[]+\\[(act|subst|ad[jv]|pronom).*")) return Tuple.of(UDv2Relations.NSUBJ, null);
-				}
-				else if (parentTag.matches("v..[^pn].....a.*"))
-						return Tuple.of(UDv2Relations.NSUBJ, null);
-				else if (parentTag.matches("v..[^pn].....p.*"))
-						return Tuple.of(UDv2Relations.NSUBJ_PASS, null);
-				// Infinitive subjects
-				else if (parentTag.matches("v..[np].*") && !tag.matches("(yr|[rci]).*]"))
-				{
-					Matcher m = Pattern.compile("([na]...|[mp]....|v..pd..)(.).*").matcher(tag);
-					if (m.matches())
-					{
-						String caseLetter = m.group(2);
-						String caseString = UDv2Feat.caseLetterToLCString(caseLetter);
-						if (caseString != null || caseLetter.equals("0") || caseLetter.equals("_"))
-							return Tuple.of(UDv2Relations.OBL, caseString);
-					}
-					if (tag.matches("(x|y[npa]).*"))
-						return Tuple.of(UDv2Relations.OBL, null);
-				}
+				if (reduction.matches("v..[^p].....p.*|v..pd...p.*"))
+					return Tuple.of(resRolePasive, null);
+				if (reduction.matches("v.*"))
+					return Tuple.of(resRoleActive, null);
 			}
 		}
-		// Infinitive
-		if (tag.matches("v..n.*"))
-			return Tuple.of(UDv2Relations.CCOMP, null);
 
 		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
-	public Tuple<UDv2Relations, String> objToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> objToUD(PmlANode node, PmlANode parent)
 	{
 		String tag = node.getAnyTag();
 		String parentTag = parent.getAnyTag();
 		PmlANode phraseChild = node.getPhraseNode();
+		if (parentTag.matches("a.*"))
+			return Tuple.of(UDv2Relations.OBL, null);
 		if (phraseChild != null)
 		{
 			String constLabel = phraseChild.getAnyLabel();
@@ -289,11 +251,10 @@ public class DepRelLogic
 		return Tuple.of(UDv2Relations.IOBJ, null);
 	}
 
-	public Tuple<UDv2Relations, String> spcToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> spcToUD(PmlANode node, PmlANode parent)
 	{
 		String tag = node.getAnyTag();
 		String parentTag = parent.getAnyTag();
-
 		// If parent is something reduced to punctuation mark, use reduction
 		// tag instead.
 		if (parentTag.matches("z.*"))
@@ -302,160 +263,286 @@ public class DepRelLogic
 			if (parentRed != null && parentRed.length() > 0)
 				parentTag = parentRed;
 		}
-
 		String parentEffRole = parent.getEffectiveLabel();
-		// Infinitive SPC
-		if (tag.matches("v..n.*"))
-		{
-			PmlANode pmlEfParent = parent.getThisOrEffectiveAncestor();
-			String effParentType = pmlEfParent.getAnyLabel();
-			if (parentTag.matches("v..([^p]|p[^d]).*") || LvtbXTypes.XPRED.equals(effParentType))
-				return Tuple.of(UDv2Relations.CCOMP, null); // It is impposible safely to distinguish xcomp for now.
-			if (parentTag.matches("v..pd.*")) return Tuple.of(UDv2Relations.XCOMP, null);
-			if (parentTag.matches("[nampx].*|y[npa].*")) return Tuple.of(UDv2Relations.ACL, null);
-		}
-
 		PmlANode phrase = node.getPhraseNode();
-		//String xType = XPathEngine.get().evaluate("./children/xinfo/xtype", node);
-		String xType = phrase == null || phrase.getNodeType() != PmlANode.Type.X
-				? null
-				: phrase.getPhraseType();
-		// prepositional SPC
-		if (xType != null && xType.equals(LvtbXTypes.XPREP))
-		{
-			List<PmlANode> preps = phrase.getChildren(LvtbRoles.PREP);
-			List<PmlANode> basElems = phrase.getChildren(LvtbRoles.BASELEM);
-
-			// NB! Secība ir svarīga. Nevar pirms šī likt parastos nomenus!
-			if (preps.size() > 1)
-				logger.doInsentenceWarning(String.format(
-						"\"%s\" with ID \"%s\" has multiple \"%s\".",
-						xType, node.getId(), LvtbRoles.PREP));
-			if (preps.isEmpty())
-			{
-				logger.doInsentenceWarning(String.format(
-						"\"%s\" with ID \"%s\" has no \"%s\".",
-						xType, node.getId(), LvtbRoles.PREP));
-				return Tuple.of(UDv2Relations.DEP, null);
-			}
-			if (basElems.size() > 1)
-				logger.doInsentenceWarning(String.format(
-						"\"%s\" with ID \"%s\" has multiple \"%s\".",
-						xType, node.getId(), LvtbRoles.BASELEM));
-			if (basElems.isEmpty())
-			{
-				logger.doInsentenceWarning(String.format(
-						"\"%s\" with ID \"%s\" has no \"%s\".",
-						xType, node.getId(), LvtbRoles.BASELEM));
-				return Tuple.of(UDv2Relations.DEP, null);
-			}
-			String baseElemTag = basElems.get(0).getAnyTag();
-			PmlMNode prepM = preps.get(0).getM();
-			String prepRed = preps.get(0).getReduction();
-			// prepM is null in the rare cases when prep is coordinated.
-			String prepLemma = prepM == null ? null : prepM.getLemma();
-			if (prepRed != null && !prepRed.isEmpty()) prepLemma = null;
-			if ("par".equals(prepLemma)
-					&& baseElemTag != null && baseElemTag.matches("[nampx].*|y[npa].*")
-					&& (parentTag.matches("v.*") || LvtbRoles.PRED.equals(parentEffRole)))
-				return Tuple.of(UDv2Relations.XCOMP, null);
-			else if (parentTag.matches("[nampx].*|y[npa].*|v..pd.*"))
-				//return Tuple.of(UDv2Relations.NMOD, prepLemma == null ? null : prepLemma.toLowerCase());
-				return Tuple.of(UDv2Relations.NMOD, prepLemma);
-		}
-
-		// SPC with comparison
-		if (xType != null && xType.equals(LvtbXTypes.XSIMILE))
-		{
-			List<PmlANode> conjs = phrase.getChildren(LvtbRoles.CONJ);
-			if (conjs.size() > 1)
-				logger.doInsentenceWarning(String.format(
-						"\"%s\" with ID \"%s\" has multiple \"%s\".",
-						xType, node.getId(), LvtbRoles.CONJ));
-			String conjLemma = null;
-			if (conjs.size() > 0) // One weird case of reduced conjunction has no conjs.
-			{
-				conjLemma = conjs.get(0).getM().getLemma();
-				String conjRed = conjs.get(0).getReduction();
-				if (conjRed != null && !conjRed.isEmpty()) conjLemma = null;
-			}
-			else logger.doInsentenceWarning(String.format(
-					"\"%s\" with ID \"%s\" has no \"%s\".",
-					xType, node.getId(), LvtbRoles.CONJ));
-			if (parentTag.matches("n.*|y[np].*") && tag.matches("[nampx].*|y[npa].*|v..pd.*"))
-				return Tuple.of(UDv2Relations.NMOD, conjLemma);
-			return Tuple.of(UDv2Relations.OBL, conjLemma);
-		}
-		// Simple nominal SPC
-		if (tag.matches("[na]...[g].*|[pm]....[g].*|v..p...[g].*"))
-			return Tuple.of(UDv2Relations.OBL, UDv2Feat.CASE_GEN.value.toLowerCase());
-		if (tag.matches("x.*|y[npa].*") && parentTag.matches("v..p....ps.*"))
-			return Tuple.of(UDv2Relations.OBL, null);
-		if (tag.matches("[na]...[adnl].*|[pm]....[adnl].*|v..pd..[adnl].*|x.*|y[npa].*"))
-		{
-			// TODO Optimize to a single match
-			Matcher m = Pattern.compile("([na]...|[mp]....|v..p...)(.).*").matcher(tag);
-			if (m.matches())
-			{
-				String caseLetter = m.group(2);
-				String caseString = UDv2Feat.caseLetterToLCString(caseLetter);
-				if (caseString != null || caseLetter.equals("0") || caseLetter.equals("_"))
-					return Tuple.of(UDv2Relations.ACL, caseString);
-			}
-			if (tag.matches("[xy].*"))
-				return Tuple.of(UDv2Relations.ACL, null);
-		}
-
-		// Participal SPC
-		if (tag.matches("v..p[pu].*")) return Tuple.of(UDv2Relations.ADVCL, null);
-
-		// SPC with punctuation.
-		//String pmcType = XPathEngine.get().evaluate("./children/pmcinfo/pmctype", node);
 		String pmcType = phrase == null || phrase.getNodeType() != PmlANode.Type.PMC
 				? null
 				: phrase.getPhraseType();
+		String xType = phrase == null || phrase.getNodeType() != PmlANode.Type.X
+				? null
+				: phrase.getPhraseType();
+
+		// NB! Secība ir svarīga. Nevar pirms šī likt parastos nomenus!
+		// prepositional SPC (without PMC)
+		if (xType != null && xType.equals(LvtbXTypes.XPREP))
+			return noPunctXPrepSpcToUD(node, phrase, parentTag, parentEffRole);
+		// SPC with comparison (without PMC)
+		if (xType != null && xType.equals(LvtbXTypes.XSIMILE))
+			return noPunctXSimileSpcToUD(node, phrase, tag, parentTag);
+
+		// Infinitive SPC (+/- PMC)
+		if (tag.matches("v..n.*")) return infSpcToUD(parent, parentTag);
+		// Participal SPC (both with and without PMC)
+		if (tag.matches("v..pp.*")) return Tuple.of(UDv2Relations.XCOMP, null);
+		if (tag.matches("v..pu.*")) return Tuple.of(UDv2Relations.ADVCL, null);
+
+		// SPC with punctuation.
 		if (pmcType != null && pmcType.equals(LvtbPmcTypes.SPCPMC))
 		{
 			List<PmlANode> basElems = phrase.getChildren(LvtbRoles.BASELEM);
 			if (basElems.size() > 1)
-				logger.doInsentenceWarning(String.format(
+				StandardLogger.l.doInsentenceWarning(String.format(
 						"\"%s\" has multiple \"%s\".", pmcType, LvtbRoles.BASELEM));
 			String basElemTag = basElems.get(0).getAnyTag();
-			// TODO test this bugfix
 			PmlANode basElemPhrase = basElems.get(0).getPhraseNode();
 			String basElemXType = basElemPhrase == null
 					? null
 					: basElems.get(0).getPhraseType();
 
-			// SPC with comparison
+			// SPC with pmc-ed xPrep
+			if (basElemPhrase != null && basElemPhrase.getNodeType() == PmlANode.Type.X
+					&& LvtbXTypes.XPREP.equals(basElemXType))
+				return pmcXPrepSpcToUD(basElems.get(0), basElemPhrase, parentTag);
+
+			// SPC with pmc-ed comparison
 			if (basElemPhrase != null && basElemPhrase.getNodeType() == PmlANode.Type.X
 					&& LvtbXTypes.XSIMILE.equals(basElemXType))
-			{
-				List<PmlANode> conjs = basElemPhrase.getChildren(LvtbRoles.CONJ);
-				if (conjs.size() > 1)
-					logger.doInsentenceWarning(String.format(
-							"\"%s\" with ID \"%s\" has multiple \"%s\".",
-							xType, basElems.get(0).getId(), LvtbRoles.CONJ));
-				String conjLemma = conjs.get(0).getM().getLemma();
-				String conjRed = conjs.get(0).getReduction();
-				if (conjRed != null && !conjRed.isEmpty()) conjLemma = null;
-				return Tuple.of(UDv2Relations.ADVCL, conjLemma);
-			}
+				return pmcXSimileSpcToUD(basElems.get(0), basElemPhrase);
+
 			// Participal SPC, adverbs in commas
-			if (basElemTag.matches("v..p[pu].*|r.*|yr.*"))
+			//if (basElemTag.matches("v..p[pu].*|r.*|yr.*")) // participles are duplicated from above
+			if (basElemTag.matches("r.*|yr.*"))
 				return Tuple.of(UDv2Relations.ADVCL, null);
 			// Nominal SPC
-			if (basElemTag.matches("n.*") || 	basElemTag.matches("y[np].*"))
-				return Tuple.of(UDv2Relations.APPOS, null);
+			if (basElemTag.matches("n.*|y[np].*"))
+				return pmcNominalSpcToUD(node, parent, basElems.get(0),
+						basElemPhrase, tag, parentTag);
+			// Declensible participle SPC
+			if (basElemTag.matches("v..pd.*") && parentTag.matches("v..([^p]|p[^d])*"))
+				return Tuple.of(UDv2Relations.XCOMP, null);
 			// Adjective SPC
-			if (basElemTag.matches("a.*|v..d.*|ya.*"))
+			if (basElemTag.matches("a.*|v..pd.*|ya.*"))
 				return Tuple.of(UDv2Relations.ACL, null);
 		}
+
+		// Simple nominal SPC (without PMC)
+		if (pmcType == null && tag.matches("[napmx].*|v..pd.*|y[npa].*"))
+			return noPunctNominalSpcToUD(node, parent, tag, parentTag);
 
 		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
-	public Tuple<UDv2Relations, String> attrToUD(PmlANode node, PmlANode parent)
+	protected static Tuple<UDv2Relations, String> infSpcToUD (
+			PmlANode parent, String parentTag)
+	{
+		PmlANode pmlEfParent = parent.getThisOrEffectiveAncestor();
+		String effParentType = pmlEfParent.getAnyLabel();
+		if (parentTag.matches("v..([^p]|p[^d]).*") || LvtbXTypes.XPRED.equals(effParentType))
+			return Tuple.of(UDv2Relations.CCOMP, null); // It is impposible safely to distinguish xcomp for now.
+		if (parentTag.matches("v..pd.*")) return Tuple.of(UDv2Relations.XCOMP, null);
+		if (parentTag.matches("[nampx].*|y[npa].*")) return Tuple.of(UDv2Relations.ACL, null);
+		return Tuple.of(UDv2Relations.DEP, null);
+	}
+
+	protected static Tuple<UDv2Relations, String> noPunctXPrepSpcToUD (
+			PmlANode node, PmlANode phrase, String parentTag, String parentEffRole)
+	{
+		List<PmlANode> preps = phrase.getChildren(LvtbRoles.PREP);
+		List<PmlANode> basElems = phrase.getChildren(LvtbRoles.BASELEM);
+		String xType = phrase.getPhraseType();
+
+		if (preps.size() > 1)
+			StandardLogger.l.doInsentenceWarning(String.format(
+					"\"%s\" with ID \"%s\" has multiple \"%s\".",
+					xType, node.getId(), LvtbRoles.PREP));
+		if (preps.isEmpty())
+		{
+			StandardLogger.l.doInsentenceWarning(String.format(
+					"\"%s\" with ID \"%s\" has no \"%s\".",
+					xType, node.getId(), LvtbRoles.PREP));
+			return Tuple.of(UDv2Relations.DEP, null);
+		}
+		if (basElems.size() > 1)
+			StandardLogger.l.doInsentenceWarning(String.format(
+					"\"%s\" with ID \"%s\" has multiple \"%s\".",
+					xType, node.getId(), LvtbRoles.BASELEM));
+		if (basElems.isEmpty())
+		{
+			StandardLogger.l.doInsentenceWarning(String.format(
+					"\"%s\" with ID \"%s\" has no \"%s\".",
+					xType, node.getId(), LvtbRoles.BASELEM));
+			return Tuple.of(UDv2Relations.DEP, null);
+		}
+		String baseElemTag = basElems.get(0).getAnyTag();
+		PmlMNode prepM = preps.get(0).getM();
+		String prepRed = preps.get(0).getReduction();
+		// prepM is null in the rare cases when prep is coordinated.
+		String prepLemma = prepM == null ? null : prepM.getLemma();
+		if (prepRed != null && !prepRed.isEmpty()) prepLemma = null;
+
+		if ("par".equals(prepLemma)
+				&& baseElemTag != null && baseElemTag.matches("[nampx].*|y[npa].*")
+				&& (parentTag.matches("v.*") || LvtbRoles.PRED.equals(parentEffRole)))
+			return Tuple.of(UDv2Relations.XCOMP, null);
+		else if (parentTag.matches("v..([^p]|p[^d]).*"))
+			return Tuple.of(UDv2Relations.OBL, prepLemma);
+		else if (parentTag.matches("[nampx].*|y[npa].*|v..pd.*"))
+			//return Tuple.of(UDv2Relations.NMOD, prepLemma == null ? null : prepLemma.toLowerCase());
+			return Tuple.of(UDv2Relations.NMOD, prepLemma);
+		return Tuple.of(UDv2Relations.DEP, null);
+	}
+
+	protected static Tuple<UDv2Relations, String> pmcXPrepSpcToUD(
+			PmlANode basElem, PmlANode basElemPhrase, String parentTag)
+	{
+		String basElemXType = basElem.getPhraseType();
+		List<PmlANode> preps = basElemPhrase.getChildren(LvtbRoles.PREP);
+		if (preps.size() > 1)
+			StandardLogger.l.doInsentenceWarning(String.format(
+					"\"%s\" with ID \"%s\" has multiple \"%s\".",
+					basElemXType, basElem.getId(), LvtbRoles.PREP));
+		String prepLemma = preps.get(0).getM().getLemma();
+		String prepRed = preps.get(0).getReduction();
+		if (prepRed != null && !prepRed.isEmpty()) prepLemma = null;
+
+		// SPC with xPrep with nominal parent
+		if (parentTag.matches("[nampx].*|y[npa].*|v..pd.*"))
+			return Tuple.of(UDv2Relations.ACL, prepLemma);
+		// SPC with xPrep with other parent
+		return Tuple.of(UDv2Relations.OBL, prepLemma);
+	}
+
+	protected static Tuple<UDv2Relations, String> noPunctXSimileSpcToUD (
+			PmlANode node, PmlANode phrase, String tag, String parentTag)
+	{
+		String conjLemma = Helper.getXSimileConjOrXPrepPrepLemma(phrase, LvtbRoles.CONJ);
+		if (parentTag.matches("n.*|y[np].*") && tag.matches("[nampx].*|y[npa].*|v..pd.*"))
+			return Tuple.of(UDv2Relations.NMOD, conjLemma);
+		return Tuple.of(UDv2Relations.OBL, conjLemma);
+	}
+
+	protected static Tuple<UDv2Relations, String> pmcXSimileSpcToUD (
+			PmlANode basElem, PmlANode basElemPhrase
+	)
+	{
+		String conjLemma = Helper.getXSimileConjOrXPrepPrepLemma(basElemPhrase, LvtbRoles.CONJ);
+		return Tuple.of(UDv2Relations.ADVCL, conjLemma);
+	}
+
+
+
+	protected static Tuple<UDv2Relations, String> pmcNominalSpcToUD (
+			PmlANode node, PmlANode parent, PmlANode basElem, PmlANode basElemPhrase,
+			String tag, String parentTag)
+	{
+		String caseString = UDv2Feat.tagToCaseString(tag);
+
+		// Vebal parent
+		if (parentTag.matches("v..([^p]|p[^d]).*"))
+			return Tuple.of(UDv2Relations.OBL, caseString);
+
+		int chOrd = node.getDeepOrd();
+		int parOrd = parent.getOrd();
+		if (parOrd < 1)
+		{
+			PmlANode parPhrase = parent.getPhraseNode();
+			if (parPhrase != null) parOrd = parPhrase.getDeepOrd();
+		}
+
+		// If parent is noun or personal pronoun and child is after parent,
+		// then apposition or acl
+		if (parentTag.matches("(pp|n|y[np]).*") && chOrd > parOrd && parOrd > 0)
+		{
+			String basElemCase = UDv2Feat.tagToCaseString(basElem.getAnyTag());
+			if ((basElemCase == caseString || basElemCase != null && basElemCase.equals(caseString)) &&
+					(basElemPhrase == null || !LvtbXTypes.XPREP.equals(basElemPhrase.getPhraseType())))
+				return Tuple.of(UDv2Relations.APPOS, null);
+			else return Tuple.of(UDv2Relations.ACL, caseString);
+		}
+
+		// If parent is pronoun and child is before parent, then dislocated
+		if (parentTag.matches("p.*") && chOrd < parOrd && chOrd > 0)
+			return Tuple.of(UDv2Relations.DISLOCATED, null);
+
+		return Tuple.of(UDv2Relations.ACL, caseString);
+	}
+
+	protected static Tuple<UDv2Relations, String> noPunctNominalSpcToUD(
+			PmlANode node, PmlANode parent, String tag, String parentTag)
+	{
+		// viens otru, cits citu
+		// SPC lemma
+		PmlMNode nodeM = node.getM();
+		String lemma = nodeM == null ? null : nodeM.getLemma();
+		if (lemma == null) lemma = node.getReductionLemma();
+		if (lemma != null && lemma.matches("(vien|cits)[sa]") && tag.matches("[mp].*"))
+		{
+			// Parent lemma
+			PmlMNode parentM = parent.getM();
+			String parentLemma = parentM == null ? null : parentM.getLemma();
+			if (parentLemma == null) parentLemma = parent.getReductionLemma();
+			if (parentM == null)
+			{
+				PmlANode parentPhrase = parent.getPhraseNode();
+				String parentPhraseType = parentPhrase == null ? null : parentPhrase.getPhraseType();
+				if (parentPhrase != null && parentPhrase.getNodeType() == PmlANode.Type.X
+						&& LvtbXTypes.XPREP.equals(parentPhraseType))
+				{
+					List<PmlANode> basElems = parentPhrase.getChildren(LvtbRoles.BASELEM);
+					if (basElems == null || basElems.size() < 1)
+						StandardLogger.l.doInsentenceWarning(String.format(
+								"\"%s\" has no \"%s\".", parentPhraseType, LvtbRoles.BASELEM));
+					else
+					{
+						if (basElems.size() > 1)
+							StandardLogger.l.doInsentenceWarning(String.format(
+									"\"%s\" has multiple \"%s\".", parentPhraseType, LvtbRoles.BASELEM));
+						PmlMNode basM = basElems.get(0).getM();
+						parentLemma = basM == null ? null : basM.getLemma();
+						if (parentLemma == null) parentLemma = basElems.get(0).getReductionLemma();
+					}
+				}
+			}
+			// Actual analysis
+			if (parentLemma != null)
+				if (lemma.matches("vien[sa]") && tag.matches("[mp].*")
+						&& parentLemma.matches("otr[sa]") && parentTag.matches("[mp].*")
+					|| lemma.matches("cit[sa]") && tag.matches("p.*")
+						&& parentLemma.matches("cit[sa]") && parentTag.matches("p.*"))
+					return Tuple.of(UDv2Relations.COMPOUND, null);
+
+		}
+
+		// Genitives.
+		if (tag.matches("[na]...[g].*|[pm]....[g].*|v..p...[g].*"))
+			return Tuple.of(UDv2Relations.OBL, UDv2Feat.CASE_GEN.value.toLowerCase());
+		if (tag.matches("x.*|y[npa].*") && parentTag.matches("v..p....ps.*"))
+			return Tuple.of(UDv2Relations.OBL, null);
+		// Any nominal with noun parent.
+		if (parentTag.matches("[np].*|y[np].*]"))
+			return Tuple.of(UDv2Relations.NMOD, UDv2Feat.tagToCaseString(tag));
+
+		// Pronoun with verbal parent.
+		if (tag.matches("p.*") && parentTag.matches("v.*"))
+		{
+			if (parentTag.matches(".*?\\[subst.*"))
+				return Tuple.of(UDv2Relations.NMOD, UDv2Feat.tagToCaseString(tag));
+			return Tuple.of(UDv2Relations.OBL, UDv2Feat.tagToCaseString(tag));
+		}
+		// Noun with verbal parent.
+		if (tag.matches("n.*|y[np].*]") && parentTag.matches("v.*") )
+		{
+			if (tag.matches("n...n.*")) return Tuple.of(UDv2Relations.XCOMP, null);
+			return Tuple.of(UDv2Relations.OBL, UDv2Feat.tagToCaseString(tag));
+		}
+		// Adjective with verbal parent.
+		if (tag.matches("[am].*|v..pd.*|ya.*") && parentTag.matches("v.*"))
+			return Tuple.of(UDv2Relations.XCOMP, null);
+
+		return Tuple.of(UDv2Relations.DEP, null);
+	}
+
+	public static Tuple<UDv2Relations, String> attrToUD(PmlANode node, PmlANode parent)
 	{
 		String tag = node.getAnyTag();
 		PmlMNode mNode = node.getM();
@@ -496,7 +583,7 @@ public class DepRelLogic
 		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
-	public Tuple<UDv2Relations, String> advSitToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> advSitToUD(PmlANode node, PmlANode parent)
 	{
 		String tag = node.getAnyTag();
 		if (tag.matches("mc.*|xn.*"))
@@ -509,14 +596,19 @@ public class DepRelLogic
 		if (xType != null && phrase.getNodeType() == PmlANode.Type.X &&
 				xType.equals(LvtbXTypes.XPREP))
 		{
-			List<PmlANode> preps = phrase.getChildren(LvtbRoles.PREP);
+			String prepLemma = Helper.getXSimileConjOrXPrepPrepLemma(phrase, LvtbRoles.PREP);
+			/*List<PmlANode> preps = phrase.getChildren(LvtbRoles.PREP);
 			if (preps.size() > 1)
-				logger.doInsentenceWarning(String.format(
+				StandardLogger.l.doInsentenceWarning(String.format(
 						"\"%s\" with ID \"%s\" has multiple \"%s\".",
 						xType, node.getId(), LvtbRoles.PREP));
-			String prepLemma = preps.get(0).getM().getLemma();
-			String prepRed = preps.get(0).getReduction();
-			if (prepRed != null && !prepRed.isEmpty()) prepLemma = null;
+			if (!preps.isEmpty())
+			{
+				prepLemma = preps.get(0).getM().getLemma();
+				String prepRed = preps.get(0).getReduction();
+				if (prepRed != null && !prepRed.isEmpty()) prepLemma = null;
+				// TODO: vai ir okei nelietot reducēto lemmu?
+			}*/
 			return Tuple.of(UDv2Relations.OBL, prepLemma);
 		}
 		if (tag.matches("n.*|p.*|mo.*"))
@@ -544,7 +636,7 @@ public class DepRelLogic
 		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
-	public Tuple<UDv2Relations, String> detToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> detToUD(PmlANode node, PmlANode parent)
 	{
 		String tag = node.getAnyTag();
 		Matcher m = Pattern.compile("([na]...|[mp]....|v..pd..)(.).*").matcher(tag);
@@ -560,7 +652,7 @@ public class DepRelLogic
 		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
-	public Tuple<UDv2Relations, String> noToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> noToUD(PmlANode node, PmlANode parent)
 	{
 		String tag = node.getAnyTag();
 		PmlMNode mNode = node.getM();
@@ -582,7 +674,7 @@ public class DepRelLogic
 		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
-	public Tuple<UDv2Relations, String> predClToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> predClToUD(PmlANode node, PmlANode parent)
 	{
 		String parentType = parent.getAnyLabel();
 
@@ -597,7 +689,7 @@ public class DepRelLogic
 		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
-	public Tuple<UDv2Relations, String> subjClToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> subjClToUD(PmlANode node, PmlANode parent)
 	{
 		// Effective ancestor is predicate
 		if (LvtbRoles.PRED.equals(parent.getEffectiveLabel()))
@@ -636,18 +728,59 @@ public class DepRelLogic
 		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
-	public Tuple<UDv2Relations, String> insToUD(PmlANode node, PmlANode parent)
+	public static Tuple<UDv2Relations, String> insToUD(PmlANode node, PmlANode parent)
 	{
 		PmlANode phrase = node.getPhraseNode();
 		if (phrase == null || phrase.getNodeType() != PmlANode.Type.PMC)
+		{
+			String tag = node.getAnyTag();
+			if (tag != null && tag.matches("z.*")) return Tuple.of(UDv2Relations.PUNCT, null);
 			return Tuple.of(UDv2Relations.DISCOURSE, null);
+		}
 
 		List<PmlANode> preds = phrase.getChildren(LvtbRoles.PRED);
 		if (preds!= null && preds.size() > 1)
-			logger.doInsentenceWarning(String.format(
+			StandardLogger.l.doInsentenceWarning(String.format(
 					"\"%s\" has multiple \"%s\".", LvtbPmcTypes.INSPMC, LvtbRoles.PRED));
 		if (preds != null && !preds.isEmpty()) return Tuple.of(UDv2Relations.PARATAXIS, null);
+		List<PmlANode> basElems = phrase.getChildren(LvtbRoles.BASELEM);
+		if (basElems!= null && basElems.size() > 1)
+			StandardLogger.l.doInsentenceWarning(String.format(
+					"\"%s\" has multiple \"%s\".", LvtbPmcTypes.INSPMC, LvtbRoles.BASELEM));
+		if (basElems != null && !basElems.isEmpty())
+		{
+			String tag = basElems.get(0).getAnyTag();
+			if (tag != null && tag.matches("z.*"))
+				return Tuple.of(UDv2Relations.PUNCT, null);
+
+			PmlANode basPhrase = basElems.get(0).getPhraseNode();
+			String coordType = basPhrase == null || basPhrase.getNodeType() != PmlANode.Type.COORD
+					? null
+					: basPhrase.getPhraseType();
+			if (LvtbCoordTypes.CRDCLAUSES.equals(coordType))
+				return Tuple.of(UDv2Relations.PARATAXIS, null);
+		}
+
+		// Insertions in parenthesis () are parataxis.
+		List<PmlANode> puncts = phrase.getChildren(LvtbRoles.PUNCT);
+		if (puncts != null) for (PmlANode p : puncts)
+		{
+			String punctLemma = null;
+			PmlMNode punctM = p.getM();
+			if (punctM != null) punctLemma = punctM.getLemma();
+			if (punctLemma != null && punctLemma.matches("[)(\\[\\]]"))
+				return Tuple.of(UDv2Relations.PARATAXIS, null);
+		}
+
 		return Tuple.of(UDv2Relations.DISCOURSE, null); // Washington (CNN) is left unidentified.
+	}
+
+	public static Tuple<UDv2Relations, String> ellipsisTokToUD(PmlANode node, PmlANode parent)
+	{
+		String tag = node.getAnyTag();
+		//System.out.println("Node " + node.getId() + ": " + tag + "; parent " + parent.getId() + ": " + parent.getAnyTag());
+		if (tag.matches("z.*")) return Tuple.of(UDv2Relations.PUNCT, null);
+		return Tuple.of(UDv2Relations.DEP, null);
 	}
 
 	/**
@@ -658,15 +791,116 @@ public class DepRelLogic
 	 *                  node to be labeled
 	 * @param enhanced  true, if role for enhanced dependency tree is being made
 	 */
-	protected void warnOnRole(
+	protected static void warnOnRole(
 			PmlANode node, PmlANode parent, String lvtbRole, boolean enhanced)
 	{
 		String prefix = enhanced ? "Enhanced role" : "Role";
 		String warning = String.format(
 				"%s \"%s\" for node \"%s\" with respect to parent \"%s\" was not transformed.",
 				prefix, lvtbRole, node.getId(), parent.getId());
-		logger.doInsentenceWarning(warning);
+		StandardLogger.l.doInsentenceWarning(warning);
 	}
 
+	/**
+	 * Relation betwen LVTB roles and UD deprel customised for processing
+	 * controlled and raised subject links
+	 * @param node		node for which UD dependency should be obtained (use
+	 *             		this node's lemma, morphology, etc.)
+	 * @param parent	node which represents UD or enhanced UD parent for the
+	 *                  node to be labeled
+	 * @param isClausal	clausal subject (true) or ordinary (false)
+	 * @return	UD dependency role and enhanced depency role postfix, if such is
+	 * 			needed.
+	 */
+	// TODO:: customise better!
+	public static Tuple<UDv2Relations, String> cRSubjToUD(
+			PmlANode node, PmlANode parent, boolean isClausal)
+	{
+		String tag = node.getAnyTag();
+		UDv2Relations resRoleActive = isClausal
+				? UDv2Relations.CSUBJ : UDv2Relations.NSUBJ;
+		UDv2Relations resRolePasive = isClausal
+				? UDv2Relations.CSUBJ_PASS : UDv2Relations.NSUBJ_PASS;
+		// Nominal++ subject
+		if (tag.matches("[nampxy].*|v..pd.*|[rci].*|y[npa].*]"))
+		{
+			String parentTag = parent.getAnyTag();
+			// Hopefully either parent or effective ancestor is tagged as verb
+			// or xPred.
+			PmlANode parentXChild = parent.getPhraseNode();
+			String parentXChildType = parentXChild == null ? null : parentXChild.getPhraseType();
 
+			// As this is called only for enhanced subject links, we can safely
+			// assume that parent is something predicative
+
+			// Parent is complex predicate
+			if (LvtbXTypes.XPRED.equals(parentXChildType))// || LvtbXTypes.XPRED.equals(ancXChildType))
+			{
+				if (parentTag.matches("v..[^p].....p.*|v[^\\[]*\\[pas.*|v..pd...p.*"))
+					return Tuple.of(resRolePasive, null);
+				if (parentTag.matches("v.*"))
+					return Tuple.of(resRoleActive, null);
+			}
+			// Parent is simple predicate or simple part of something like predicate
+			else
+			{
+				if (parentTag.matches("v..[^p].....p.*|v..pd...p.*"))
+					return Tuple.of(resRolePasive, null);
+				if (parentTag.matches("v.*"))
+					return Tuple.of(resRoleActive, null);
+
+				String reduction = parent.getReduction();
+				if (reduction != null && !reduction.isEmpty())
+				{
+					if (reduction.matches("v..[^p].....p.*|v..pd...p.*"))
+						return Tuple.of(resRolePasive, null);
+					if (reduction.matches("v.*"))
+						return Tuple.of(resRoleActive, null);
+				}
+				// TODO nominal parent?
+			}
+		}
+		// TODO infinite subject?
+		return Tuple.of(UDv2Relations.DEP, null);
+	}
+
+	/**
+	 * Quoted https://universaldependencies.org/u/overview/specific-syntax.html#ellipsis
+	 * "If the elided element is a predicate and the promoted element is one of
+	 * its arguments or adjuncts, we use the orphan relation when attaching
+	 * other non-functional dependents to the promoted head."
+	 * Our  initial interpretation was that non-functional means roles from
+	 * blocks Nominals, Clauses, Modifier words in https://universaldependencies.org/u/dep/index.html ,
+	 * however, discussion https://github.com/UniversalDependencies/docs/issues/643
+	 * narrowed the scope down.
+	 * @param role	role to check
+	 * @return	wheather it should be orphan when becomes dependant of
+	 * 			something lifted instead of predicate
+	 */
+	public static boolean canBecomeOrphan(UDv2Relations role)
+	{
+		return
+				// Nominals: core arguments
+				role == UDv2Relations.NSUBJ || role == UDv2Relations.NSUBJ_PASS
+				|| role == UDv2Relations.OBJ || role == UDv2Relations.IOBJ
+				// Clauses: core arguments
+				|| role == UDv2Relations.CSUBJ || role == UDv2Relations.CSUBJ_PASS
+				|| role == UDv2Relations.CCOMP || role == UDv2Relations.XCOMP
+				// Nominals: non-core dependents
+				|| role == UDv2Relations.OBL || role == UDv2Relations.VOCATIVE
+				//|| role == UDv2Relations.EXPL
+				|| role == UDv2Relations.DISLOCATED
+				// Clauses: non-core dependents
+				|| role == UDv2Relations.ADVCL
+				// Modifier words: non-core dependents
+				|| role == UDv2Relations.ADVMOD //|| role == UDv2Relations.DISCOURSE
+				// Nominals: nominal dependents
+				//|| role == UDv2Relations.NMOD || role == UDv2Relations.APPOS
+				//|| role == UDv2Relations.NUMMOD
+				// Clauses: nominal dependents
+				//|| role == UDv2Relations.ACL
+				// Modifier words: nominal dependents
+				//|| role == UDv2Relations.AMOD
+				;
+	}
 }

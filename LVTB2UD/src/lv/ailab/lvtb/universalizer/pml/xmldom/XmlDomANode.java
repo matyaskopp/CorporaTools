@@ -1,9 +1,13 @@
 package lv.ailab.lvtb.universalizer.pml.xmldom;
 
-import lv.ailab.lvtb.universalizer.pml.*;
+import lv.ailab.lvtb.universalizer.pml.LvtbCoordTypes;
+import lv.ailab.lvtb.universalizer.pml.LvtbHelperRoles;
+import lv.ailab.lvtb.universalizer.pml.LvtbRoles;
+import lv.ailab.lvtb.universalizer.pml.PmlANode;
 import lv.ailab.lvtb.universalizer.pml.utils.PmlANodeListUtils;
 import lv.ailab.lvtb.universalizer.transformator.morpho.AnalyzerWrapper;
-import lv.ailab.lvtb.universalizer.utils.Logger;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
@@ -325,17 +329,16 @@ public class XmlDomANode implements PmlANode
 	/**
 	 * Find reduction field value, split in tag and lemma, and then induce lemma
 	 * with the help of morphological analyzer.
-	 * @param logger	where to print errors
 	 * @return	reduction lemma
 	 */
 	@Override
-	public String getReductionLemma(Logger logger)
+	public String getReductionLemma()
 	{
 		String tag = getReductionTagPart();
 		String form = getReductionFormPart();
 		if (tag == null || form == null || tag.isEmpty() || form.isEmpty())
 			return null;
-		return AnalyzerWrapper.getLemma(form, tag, logger);
+		return AnalyzerWrapper.getLemma(form, tag);
 	}
 
 	/**
@@ -585,6 +588,29 @@ public class XmlDomANode implements PmlANode
 	}
 
 	/**
+	 * Find this or descendant node by given ID (thus, no phrase nodes will be
+	 * found)
+	 * @param id	an ID to search
+	 * @return	first node found
+	 */
+	@Override
+	public XmlDomANode getThisOrDescendant(String id)
+	{
+		if (id == null) return null;
+		if (id.equals(getId())) return this;
+		try
+		{
+			NodeList res = (NodeList) XPathEngine.get().evaluate(
+					".//node[@id='"+ id + "']", domNode, XPathConstants.NODESET);
+			if (res == null || res.getLength() < 1) return null;
+			return new XmlDomANode(res.item(0));
+		} catch (XPathExpressionException e)
+		{
+			throw new IllegalArgumentException(e);
+		}
+	}
+
+	/**
 	 * Get any descendants of any type. Root is not included.
 	 * @return	descendant list
 	 */
@@ -651,13 +677,13 @@ public class XmlDomANode implements PmlANode
 	}
 
 	/**
-	 * Find ellipsis in the subtree headed by this node. Parameter allows to
-	 * find either all ellipsis or only leaf nodes.
+	 * Find pure ellipsis (no corresponding token) in the subtree headed by this
+	 * node. Parameter allows to find either all ellipsis or only leaf nodes.
 	 * @param leafsOnly	if true, only leaf nodes are returned
 	 * @return	list of ellipsis nodes in no particular order
 	 */
 	@Override
-	public ArrayList<PmlANode> getEllipsisDescendants(boolean leafsOnly)
+	public ArrayList<PmlANode> getPureEllipsisDescendants(boolean leafsOnly)
 	{
 		String pattern = leafsOnly
 				? ".//node[reduction and not(m.rf) and not(children)]"
@@ -675,21 +701,49 @@ public class XmlDomANode implements PmlANode
 	}
 
 	/**
-	 * Find PML node by given ID.
-	 * @param id	an ID to search
-	 * @return	first node found
-	 * @throws XPathExpressionException unsuccessfull XPath evaluation (anywhere
-	 * 									in the PML tree) most probably due to
-	 * 									algorithmical error.
+	 * Find ellipsis nodes with corresponding token in the subtree headed by
+	 * this node. Parameter allows to find either all ellipsis or only leaf
+	 * nodes.
+	 * @param leafsOnly	if true, only leaf nodes are returned
+	 * @return	list of ellipsis nodes in no particular order
 	 */
-	public void findPmlNode(String id) throws XPathExpressionException
+	@Override
+	public List<PmlANode> getMorphoEllipsisDescendants(boolean leafsOnly)
 	{
-//		NodeList res = (NodeList) XPathEngine.get().evaluate(
-//				".//node[@id='"+ id + "']", pmlTree, XPathConstants.NODESET);
-//		if (res == null || res.getLength() < 1) return null;
-//		return res.item(0);
+		String pattern = leafsOnly
+				? ".//node[reduction and m.rf and not(children)]"
+				: ".//node[reduction and m.rf]";
+		try
+		{
+			NodeList tempRes = (NodeList) XPathEngine.get().evaluate(
+					pattern, domNode, XPathConstants.NODESET);
+			return XmlDomANode.asList(tempRes);
+		}
+		catch (XPathExpressionException e)
+		{
+			throw new IllegalArgumentException(e);
+		}
 	}
 
+	/**
+	 * Find nodes having m-token, but no w-token.
+	 * @return list of inserted token nodes in no particular order
+	 */
+	@Override
+	public List<PmlANode> getInsertedMorphoDescendants()
+	{
+		String pattern = ".//node[m.rf and not(w.rf)]";
+		try
+		{
+			NodeList tempRes = (NodeList) XPathEngine.get().evaluate(
+					pattern, domNode, XPathConstants.NODESET);
+			return XmlDomANode.asList(tempRes);
+		}
+		catch (XPathExpressionException e)
+		{
+			throw new IllegalArgumentException(e);
+		}
+	}
 
 	/**
 	 * Find parent or the closest ancestor, that is not coordination phrase or
@@ -751,6 +805,27 @@ public class XmlDomANode implements PmlANode
 		return false;
 	}
 
+	/**
+	 * Returns the lenght of the shortest path connecting this node and root.
+	 * @return	0 for root node, 1 for root's dependents and constituents, 2 for
+	 * 			for their dependents and constituents, etc.
+	 */
+	@Override
+	public Integer getDepthInTree()
+	{
+		try
+		{
+			NodeList res = (NodeList) XPathEngine.get().evaluate(
+					"ancestor-or-self::node",
+					domNode, XPathConstants.NODESET);
+			if (res == null || res.getLength() < 1) return 0;
+			return res.getLength();
+		} catch (XPathExpressionException e)
+		{
+			throw new IllegalArgumentException(e);
+		}
+	}
+
 	//=== Tree modification ====================================================
 
 	/**
@@ -759,6 +834,24 @@ public class XmlDomANode implements PmlANode
 	public void delete()
 	{
 		domNode.getParentNode().removeChild(domNode);
+	}
+
+	/**
+	 * Remove this nodes m-node.
+	 */
+	@Override
+	public void deleteM()
+	{
+		try
+		{
+			Node mDom = (Node) XPathEngine.get().evaluate(
+					"./m.rf", domNode, XPathConstants.NODE);
+			domNode.removeChild(mDom);
+		}
+		catch (XPathExpressionException e)
+		{
+			throw new IllegalArgumentException(e);
+		}
 	}
 
 	/**
@@ -811,17 +904,113 @@ public class XmlDomANode implements PmlANode
 			if (tagNode == null) tagNode = domNode.getOwnerDocument().createElement("reduction");
 			while (tagNode.getFirstChild() != null)
 				tagNode.removeChild(tagNode.getFirstChild());
-			if (tag != null && !tag.isEmpty())
-			{
+			//if (tag != null && !tag.isEmpty())
+			//{
 				tagNode.appendChild(domNode.getOwnerDocument().createTextNode(newRedField));
 				domNode.appendChild(tagNode);
-			}
+			//}
 			return true;
 		} catch (XPathExpressionException e)
 		{
 			throw new IllegalArgumentException(e);
 		}
 	}
+	/**
+	 * Set a reduction form, if there is none, return false otherwise.
+	 * @param form	form value to set
+	 * @return	true if form was set
+	 */
+	@Override
+	public boolean setReductionForm(String form)
+	{
+		String oldRedForm = getReductionFormPart();
+		if (oldRedForm != null && !oldRedForm.trim().isEmpty()) return false;
+		String oldRedTag = getReductionTagPart();
+		String newRedField = "";
+		if (form != null) newRedField = "(" + form.trim() + ")";
+		if (oldRedTag != null) newRedField = oldRedTag + newRedField;
+		try
+		{
+			Node tagNode = (Node) XPathEngine.get().evaluate(
+					"./reduction", domNode, XPathConstants.NODE);
+			if (tagNode == null) tagNode = domNode.getOwnerDocument().createElement("reduction");
+			while (tagNode.getFirstChild() != null)
+				tagNode.removeChild(tagNode.getFirstChild());
+			//if (form != null && !form.isEmpty())
+			//{
+				tagNode.appendChild(domNode.getOwnerDocument().createTextNode(newRedField));
+				domNode.appendChild(tagNode);
+			//}
+			return true;
+		} catch (XPathExpressionException e)
+		{
+			throw new IllegalArgumentException(e);
+		}
+	}
+
+
+	/**
+	 * Split nonempty ellipsis node into empty ellipsis node and dependant
+	 * child.
+	 * @param idPostfix	string to append to the node ID to create ID for new
+	 *                  node.
+	 * @return	if an actual split was done
+	 */
+	@Override
+	public boolean splitMorphoEllipsis(String idPostfix)
+	{
+		if (isPureReductionNode()) return false;
+		String reductionField = getReduction();
+		if (reductionField == null || reductionField.isEmpty()) return false;
+		try
+		{
+			XmlDomANode parentToAppend = getParent();
+			//if (!parentToAppend.isPhraseNode()) parentToAppend = this;
+			if (!parentToAppend.isPhraseNode() || parentToAppend.getNodeType().equals(Type.COORD))
+				parentToAppend = this;
+			Document ownerDoc = domNode.getOwnerDocument();
+			// Children container
+			Node childenNode = (Node) XPathEngine.get().evaluate(
+					"./children", parentToAppend.domNode, XPathConstants.NODE);
+			if (childenNode == null)
+			{
+				childenNode = ownerDoc.createElement("children");
+				parentToAppend.domNode.appendChild(childenNode);
+			}
+
+			// Node itself
+			Element newTokenNode = ownerDoc.createElement("node");
+			childenNode.appendChild(newTokenNode);
+
+			// id attribute
+			String newId = getId() + idPostfix;
+			newTokenNode.setAttribute("id", newId);
+
+			// Move morphology
+			Node mDom = (Node) XPathEngine.get().evaluate(
+					"./m.rf", domNode, XPathConstants.NODE);
+			domNode.removeChild(mDom);
+			newTokenNode.appendChild(mDom);
+
+			// Move ord
+			Node ord = (Node) XPathEngine.get().evaluate(
+					"./ord", domNode, XPathConstants.NODE);
+			domNode.removeChild(ord);
+			newTokenNode.appendChild(ord);
+
+			// Role.
+			Node roleNode = ownerDoc.createElement("role");
+			newTokenNode.appendChild(roleNode);
+			roleNode.appendChild(ownerDoc.createTextNode(LvtbRoles.ELLIPSIS_TOKEN));
+
+			return true;
+		}
+		catch (XPathExpressionException e)
+		{
+			throw new IllegalArgumentException(e);
+		}
+	}
+
 	//=== Helpers ==============================================================
 
 	/**

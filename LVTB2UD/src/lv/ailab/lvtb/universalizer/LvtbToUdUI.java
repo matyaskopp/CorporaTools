@@ -1,10 +1,10 @@
 package lv.ailab.lvtb.universalizer;
 
 import lv.ailab.lvtb.universalizer.transformator.PmlXmlFileTransformator;
-import lv.ailab.lvtb.universalizer.utils.Logger;
+import lv.ailab.lvtb.universalizer.transformator.StandardLogger;
 import lv.ailab.lvtb.universalizer.transformator.TransformationParams;
 
-import java.io.*;
+import java.io.File;
 
 /**
  * Overview
@@ -39,7 +39,6 @@ public class LvtbToUdUI
 	public static String logPath = "./data/log/";
 	public static String outputDataPath = "./data/conll-u/";
 	public static TransformationParams params = new TransformationParams();
-	public static Logger logger;
 
 	public static void main(String[] args) throws Exception
 	{
@@ -61,13 +60,18 @@ public class LvtbToUdUI
 		if (!outFolder.exists()) outFolder.mkdirs();
 		File logFolder = new File(logPath);
 		if (!logFolder.exists()) logFolder.mkdirs();
-		logger = new Logger(logFolder + "/status.log", logFolder + "/ids.log");
+		//StandardLogger.l = new Logger(logFolder + "/status.log", logFolder + "/ids.log");
+		StandardLogger.initialize(logFolder);
 		File[] listOfFiles = folder.listFiles();
 		int omittedTrees = 0;
 		int omittedFiles = 0;
 		int autoFiles = 0;
 		int fixmeFiles = 0;
 		int crashFiles = 0;
+		int depBaseRoleSent = 0;
+		int depBaseRoleSum = 0;
+		int depEnhRoleSent = 0;
+		int depEnhRoleSum = 0;
 		for (File f : listOfFiles)
 		{
 			String fileName = f.getName();
@@ -76,10 +80,10 @@ public class LvtbToUdUI
 			if (fileName.endsWith(".pml")) try
 			{
 				System.out.printf("Processing file \"%s\", ", fileName);
-				logger.startFile(fileName);
+				StandardLogger.l.startFile(fileName);
 				String outPath = outputDataPath + fileName.substring(0, fileName.length() - 3) + "conllu";
-				ft.readAndTransform(f.getAbsolutePath(), logger);
-				boolean madeFile = ft.writeResult(outPath, logger);
+				ft.readAndTransform(f.getAbsolutePath());
+				boolean madeFile = ft.writeResult(outPath);
 				if (madeFile) omittedTrees = omittedTrees + ft.omitted;
 				else
 				{
@@ -89,10 +93,14 @@ public class LvtbToUdUI
 				if (ft.hasCrashSent) crashFiles++;
 				if (ft.hasFixme) fixmeFiles++;
 				if (ft.hasAuto) autoFiles++;
+				depBaseRoleSent = depBaseRoleSent + ft.depRoleBaseSent;
+				depBaseRoleSum = depBaseRoleSum + ft.depRoleBaseSum;
+				depEnhRoleSent = depEnhRoleSent+ ft.depRoleEnhSent;
+				depEnhRoleSum = depEnhRoleSum + ft.depRoleEnhSum;
 			} catch (Exception e)
 			{
 				System.out.printf("File failed with exception %s.\n", e.toString());
-				logger.finishFileWithException(e);
+				StandardLogger.l.finishFileWithException(e);
 				omittedTrees = omittedTrees + ft.all;
 				omittedFiles++;
 				crashFiles++;
@@ -101,7 +109,7 @@ public class LvtbToUdUI
 			{
 				System.out.println(
 						"Oops! Unexpected extension for file \"" + fileName + "\"!");
-				logger.finishFileWithBadExt(fileName);
+				StandardLogger.l.finishFileWithBadExt(fileName);
 			}
 
 		}
@@ -112,16 +120,25 @@ public class LvtbToUdUI
 					"Everything is finished, %s trees was omited.\n", omittedTrees);
 		else
 			System.out.printf(
-					"Everything is finished, %s files and %s trees was omited.\n",
+					"Everything is finished, %s file(s) and %s tree(s) was omited.\n",
 					omittedFiles, omittedTrees);
 		if (autoFiles > 0)
-			System.out.printf("%s files have AUTOs.\n", autoFiles);
+			System.out.printf("%s file(s) have AUTOs.\n", autoFiles);
 		if (fixmeFiles > 0)
-			System.out.printf("%s files have FIXMEs.\n", fixmeFiles);
+			System.out.printf("%s file(s) have FIXMEs.\n", fixmeFiles);
 		if (crashFiles > 0)
-			System.out.printf("%s files have crashing sentences.\n", crashFiles);
-		logger.finalStatsAndClose(omittedFiles, omittedTrees,
-				autoFiles, fixmeFiles, crashFiles);
+			System.out.printf("%s file(s) have crashing sentences.\n", crashFiles);
+		if (depBaseRoleSent > 0)
+			System.out.printf(
+					"%s sentence(s) have altogether %s 'dep' role(s) in basic dependency layer.\n",
+					depBaseRoleSent, depBaseRoleSum);
+		if (depEnhRoleSent > 0)
+			System.out.printf(
+					"%s sentence(s) have altogether %s 'dep' role(s) in enhanced dependency layer.\n",
+					depEnhRoleSent, depEnhRoleSum);
+		StandardLogger.l.finalStatsAndClose(omittedFiles, omittedTrees,
+				autoFiles, fixmeFiles, crashFiles, depBaseRoleSent,
+				depBaseRoleSum, depEnhRoleSent, depEnhRoleSum);
 	}
 
 	/**
@@ -164,6 +181,10 @@ public class LvtbToUdUI
 							params.ADD_NODE_IDS = value;
 							hasMandatory = true;
 						}
+						else return false;
+						break;
+					case "split_ellipsis":
+						if (isBool) params.SPLIT_NONEMPTY_ELLIPSIS = value;
 						else return false;
 						break;
 					case "debug":
@@ -226,6 +247,8 @@ public class LvtbToUdUI
 				"Possible key values (case insensitive):\n" +
 				"  add_node_ids   [bool, mandatory] - should Misc column contain node IDs from\n" +
 				"                                   LVTB?\n" +
+				"  split_ellipsis [bool, true by default] - treat ellipsis node with morphology\n" +
+				"                                         as two nodes.\n" +
 				"  debug          [bool, false by default] - print debug message for each node.\n" +
 				"  warn_ellipsis  [bool, false by default] - warn on ellipsis.\n" +
 				"  warn_omissions [bool, true  by default]  - warn if a sentence is omitted.\n" +

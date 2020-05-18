@@ -1,20 +1,17 @@
 package lv.ailab.lvtb.universalizer.transformator.morpho;
 
-import lv.ailab.lvtb.universalizer.conllu.MiscKeys;
-import lv.ailab.lvtb.universalizer.conllu.MiscValues;
-import lv.ailab.lvtb.universalizer.conllu.Token;
-import lv.ailab.lvtb.universalizer.conllu.UDv2Relations;
-import lv.ailab.lvtb.universalizer.pml.LvtbFormChange;
-import lv.ailab.lvtb.universalizer.pml.PmlANode;
-import lv.ailab.lvtb.universalizer.pml.PmlMNode;
-import lv.ailab.lvtb.universalizer.pml.PmlWNode;
+import lv.ailab.lvtb.universalizer.conllu.*;
+import lv.ailab.lvtb.universalizer.pml.*;
 import lv.ailab.lvtb.universalizer.pml.utils.PmlANodeListUtils;
 import lv.ailab.lvtb.universalizer.pml.utils.PmlIdUtils;
-import lv.ailab.lvtb.universalizer.utils.Logger;
 import lv.ailab.lvtb.universalizer.transformator.Sentence;
+import lv.ailab.lvtb.universalizer.transformator.StandardLogger;
 import lv.ailab.lvtb.universalizer.transformator.TransformationParams;
 
-import java.util.*;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -29,12 +26,10 @@ public class MorphoTransformator {
 	 */
 	public Sentence s;
 	protected TransformationParams params;
-	protected Logger logger;
 
-	public MorphoTransformator(Sentence sent, TransformationParams params, Logger logger)
+	public MorphoTransformator(Sentence sent, TransformationParams params)
 	{
 		s = sent;
-		this.logger = logger;
 		this.params = params;
 	}
 
@@ -59,7 +54,7 @@ public class MorphoTransformator {
 			Integer currentOrd = current.getOrd();
 			if (currentOrd == null || currentOrd < 1) continue;
 			if (prevOrd == currentOrd)
-				logger.doInsentenceWarning(String.format(
+				StandardLogger.l.doInsentenceWarning(String.format(
 						"\"%s\" has several nodes with ord \"%s\", arbitrary order used!", s.id, currentOrd));
 
 			// Determine, if paragraph has border before this token.
@@ -71,7 +66,7 @@ public class MorphoTransformator {
 				String nextId = nextW.getId();
 				Boolean tempChange = PmlIdUtils.isParaBorderBetween(prevId, nextId);
 				if (tempChange == null)
-					logger.doInsentenceWarning(String.format(
+					StandardLogger.l.doInsentenceWarning(String.format(
 							"Node id \"%s\" or \"%s\" does not match paragraph searching pattern!",
 							prevId, nextId));
 				else paragraphChange = tempChange;
@@ -83,6 +78,28 @@ public class MorphoTransformator {
 			if (currentWs != null && !currentWs.isEmpty())
 				prevW = currentWs.get(currentWs.size() - 1);
 			prevOrd = currentOrd;
+		}
+		if (params.ADD_NODE_IDS && params.SPLIT_NONEMPTY_ELLIPSIS) cleanupIds();
+	}
+
+	/**
+	 * Check all references to original nodes and remove artificially added node
+	 * ID prefixes.
+	 */
+	protected void cleanupIds()
+	{
+		for (Token t : s.conll)
+		{
+			HashSet<String> misc = t.misc.get(MiscKeys.LVTB_NODE_ID);
+			for (String id : misc)
+			{
+				if (id.endsWith(Sentence.ID_POSTFIX))
+				{
+					String newId = id.substring(0, id.length() - Sentence.ID_POSTFIX.length());
+					misc.remove(id);
+					misc.add(newId);
+				}
+			}
 		}
 	}
 
@@ -124,12 +141,18 @@ public class MorphoTransformator {
 		if (mForm.equals(source))
 			return transfOnMatch(aNode, previousToken, paragraphChange);
 		// Form does not match source, but there is no form_change available
-		else if (formChanges.isEmpty())
-			return transfOnEmptyFormCh(aNode, previousToken, paragraphChange);
+		//else if (formChanges.isEmpty())
+		//	return transfOnEmptyFormCh(aNode, previousToken, paragraphChange);
 
 		// If only correction is spelling, add in misc correct form and process as normal
+		// If also has missing space after, add in misc CorrectSpaceAfter.
 		else if (formChanges.contains(LvtbFormChange.SPELL) && formChanges.size() == 1)
-			return transfOnSpellOnly(aNode, previousToken, paragraphChange);
+			return transfOnSpellOnly(aNode, previousToken, paragraphChange, false);
+			// If only correction is spelling, add in misc correct form and process as normal
+			// If also has missing space after, add in misc CorrectSpaceAfter.
+		else if (formChanges.contains(LvtbFormChange.SPELL) && formChanges.contains(LvtbFormChange.SPACING)
+				&& !source.contains(" ") && formChanges.size() == 2)
+			return transfOnSpellOnly(aNode, previousToken, paragraphChange, true);
 		// Inserted punctuation
 		else if (formChanges.contains(LvtbFormChange.INSERT) && formChanges.contains(LvtbFormChange.PUNCT)
 				&& formChanges.size() == 2)
@@ -144,7 +167,7 @@ public class MorphoTransformator {
 				prevRealTok.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.INS_PUNCT_AFTER);
 			return params.UD_STANDARD_NULLNODES ? previousToken : transfOnPunctInsert(aNode, previousToken, paragraphChange);
 		}
-		// Renmoved punctuation (good case - no other problems)
+		// Removed punctuation (good case - no other problems)
 		else if(formChanges.contains(LvtbFormChange.UNION) && formChanges.contains(LvtbFormChange.PUNCT)
 				&& formChanges.size() == 2 && source.startsWith(mForm))
 			return transfOnCleanPunctDel(aNode, previousToken, paragraphChange);
@@ -160,10 +183,11 @@ public class MorphoTransformator {
 					formChanges.contains(LvtbFormChange.SPELL)) &&
 				wNodes != null && wNodes.size() > 1)
 			return transfOnRemovedSpaces(aNode, previousToken, paragraphChange);
-		else if (formChanges.contains(LvtbFormChange.SPACING) &&
+		// Words that must be split?
+	/*	else if (formChanges.contains(LvtbFormChange.SPACING) &&
 				!formChanges.contains(LvtbFormChange.UNION) &&
 				!formChanges.contains(LvtbFormChange.PUNCT))
-			return transfOnAddedSpaces(aNode, previousToken, paragraphChange);
+			return transfOnAddedSpaces(aNode, previousToken, paragraphChange);//*/
 		// Don't know what to do.
 		else
 			throw new IllegalArgumentException(String.format(
@@ -208,7 +232,10 @@ public class MorphoTransformator {
 		//	Add note to misc field if retokenization has been done.
 		// This happens if word is split between rows.
 		if (formChanges.contains(LvtbFormChange.SPACING))
+		{
 			res.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPACING);
+			if (noSpaceAfter) res.addMisc(MiscKeys.CORRECT_SPACE_AFTER, MiscValues.YES);
+		}
 
 		return res;
 	}
@@ -225,6 +252,7 @@ public class MorphoTransformator {
 	 *                          token.
 	 * @return last token made
 	 */
+	@Deprecated
 	protected Token transfOnEmptyFormCh(
 			PmlANode aNode, Token previousToken, boolean paragraphChange)
 	{
@@ -241,7 +269,7 @@ public class MorphoTransformator {
 
 		// If source contains no spaces, use source as wordform and
 		// add corrected form.
-		logger.doInsentenceWarning(String.format(
+		StandardLogger.l.doInsentenceWarning(String.format(
 				"Node \"%s\" with form \"%s\" has non-matching w-text \"%s\", but no form change",
 				lvtbAId, mForm, source));
 
@@ -254,7 +282,8 @@ public class MorphoTransformator {
 		Token res =  makeNewToken(
 				previousToken == null ? 1 : previousToken.idBegin + 1, 0,
 				lvtbAId, source, mLemma, lvtbTag, true);
-		res.addMisc(MiscKeys.CORRECTED_FORM, mForm);
+		res.addMisc(MiscKeys.CORRECT_FORM, mForm);
+		res.feats.add(UDv2Feat.TYPO_YES);
 		if (noSpaceAfter) res.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO);
 		if (paragraphChange || wNodes != null && wNodes.size() > 1 &&
 				hasParaChange(wNodes.get(0), wNodes.get(wNodes.size() -1)))
@@ -275,7 +304,8 @@ public class MorphoTransformator {
 	 *                          token.
 	 * @return last token made
 	 */
-	protected Token transfOnSpellOnly(PmlANode aNode, Token previousToken, boolean paragraphChange)
+	protected Token transfOnSpellOnly(PmlANode aNode, Token previousToken,
+									  boolean paragraphChange, boolean missingSpacAfter)
 	{
 		String lvtbAId = aNode.getId();
 		PmlMNode mNode = aNode.getM();
@@ -290,9 +320,18 @@ public class MorphoTransformator {
 		Token res = makeNewToken(
 				previousToken == null ? 1 : previousToken.idBegin + 1, 0,
 				lvtbAId, source, mLemma, lvtbTag, true);
-		res.addMisc(MiscKeys.CORRECTED_FORM, mForm);
+		res.addMisc(MiscKeys.CORRECT_FORM, mForm);
 		res.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPELLING);
-		if (noSpaceAfter) res.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO);
+		res.feats.add(UDv2Feat.TYPO_YES);
+		if (noSpaceAfter)
+		{
+			res.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO);
+			if (missingSpacAfter) res.addMisc(MiscKeys.CORRECT_SPACE_AFTER, MiscValues.YES);
+		}
+		else if (missingSpacAfter)
+			StandardLogger.l.doInsentenceWarning(String.format(
+					"Node \"%s\" with form \"%s\" and source \"%s\" has ignoded form_change=spacing",
+					lvtbAId, mForm, source));
 		if (paragraphChange || wNodes != null && wNodes.size() > 1 &&
 				hasParaChange(wNodes.get(0), wNodes.get(wNodes.size() -1)))
 			res.addMisc(MiscKeys.NEW_PAR, MiscValues.YES);
@@ -320,7 +359,7 @@ public class MorphoTransformator {
 		List<PmlWNode> wNodes = mNode.getWs();
 
 		if (wNodes != null && !wNodes.isEmpty() )
-			logger.doInsentenceWarning(String.format(
+			StandardLogger.l.doInsentenceWarning(String.format(
 					"Node \"%s\" has both w.rf and form change \"insert\"",
 					lvtbAId));
 
@@ -358,10 +397,10 @@ public class MorphoTransformator {
 		List<PmlWNode> wNodes = mNode.getWs();
 
 		if (wNodes != null && !wNodes.isEmpty() )
-			logger.doInsentenceWarning(String.format(
+			StandardLogger.l.doInsentenceWarning(String.format(
 					"Node \"%s\" has both w.rf and form change \"insert\"",
 					lvtbAId));
-		logger.doInsentenceWarning(String.format(
+		StandardLogger.l.doInsentenceWarning(String.format(
 				"Node \"%s\" with form \"%s\" has form change \"insert\", but not \"punct\"",
 				lvtbAId, mForm));
 
@@ -407,8 +446,9 @@ public class MorphoTransformator {
 				previousToken == null ? 1 : previousToken.idBegin + 1, 0,
 				lvtbAId, mForm, mLemma, lvtbTag, true);
 		if (paragraphChange) previousToken.addMisc(MiscKeys.NEW_PAR, MiscValues.YES); //previousToken.misc.add("NewPar=Yes");
+		source = source.substring(0, mForm.length());
 		if (!source.contains(" ")) previousToken.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO); //previousToken.misc.add("SpaceAfter=No");
-		else logger.doInsentenceWarning(String.format(
+		else if (source.trim().contains(" ")) StandardLogger.l.doInsentenceWarning(String.format(
 				"Don't know how to add SpaceAfter for \"%s\"",
 				lvtbAId));
 
@@ -419,8 +459,9 @@ public class MorphoTransformator {
 		if (noSpaceAfter || wNodes != null && wNodes.size() > 1 &&
 				hasParaChange(wNodes.get(0), wNodes.get(wNodes.size() -1)))
 			nextToken.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO); //nextToken.misc.add("SpaceAfter=No");
-		nextToken.setParentDeps(
-				previousToken, UDv2Relations.PUNCT, true, true);
+		nextToken.setHead(
+				previousToken, UDv2Relations.PUNCT, true, true,
+				params.NO_EDEP_DUPLICATES);
 		return nextToken;
 	}
 
@@ -463,8 +504,9 @@ public class MorphoTransformator {
 			previousToken = makeNewToken(
 					previousToken == null ? 1 : previousToken.idBegin + 1, 0,
 					lvtbAId, firstPart, mLemma, lvtbTag, true);
-			previousToken.addMisc(MiscKeys.CORRECTED_FORM, mForm); //previousToken.misc.add("CorrectedForm="+mForm);
+			previousToken.addMisc(MiscKeys.CORRECT_FORM, mForm); //previousToken.misc.add("CorrectedForm="+mForm);
 			previousToken.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPELLING); //previousToken.misc.add("CorrectionType=Spelling");
+			previousToken.feats.add(UDv2Feat.TYPO_YES);
 			if (paragraphChange) previousToken.addMisc(MiscKeys.NEW_PAR, MiscValues.YES); //previousToken.misc.add("NewPar=Yes");
 			if (!source.contains(" ")) previousToken.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO); //previousToken.misc.add("SpaceAfter=No");
 			//else logger.doInsentenceWarning(String.format(
@@ -478,7 +520,8 @@ public class MorphoTransformator {
 					hasParaChange(wNodes.get(0), wNodes.get(wNodes.size() -1)))
 				nextToken.addMisc(MiscKeys.NEW_PAR, MiscValues.YES);//nextToken.misc.add("NewPar=Yes");
 			if (noSpaceAfter) nextToken.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO);//nextToken.misc.add("SpaceAfter=No");
-			nextToken.setParentDeps(previousToken, UDv2Relations.PUNCT, true, true);
+			nextToken.setHead(previousToken, UDv2Relations.PUNCT, true,
+					true, params.NO_EDEP_DUPLICATES);
 			return nextToken;
 		}
 		else
@@ -526,9 +569,10 @@ public class MorphoTransformator {
 				lvtbAId,
 				forNexTok.stream().map(PmlWNode::getToken).reduce((s1, s2) -> s1 + s2).get(),
 				mLemma, lvtbTag, true);
-		previousToken.addMisc(MiscKeys.CORRECTED_FORM, mForm);//previousToken.misc.add("CorrectedForm="+mForm);
+		previousToken.addMisc(MiscKeys.CORRECT_FORM, mForm);//previousToken.misc.add("CorrectedForm="+mForm);
 		previousToken.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPACING);//previousToken.misc.add("CorrectionType=Spacing,Spelling");
 		previousToken.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPELLING);//previousToken.misc.add("CorrectionType=Spacing,Spelling");
+		previousToken.feats.add(UDv2Feat.TYPO_YES);
 		if (paragraphChange ||
 				PmlIdUtils.isParaBorderBetween(forNexTok.peek().getId(), forNexTok.poll().getId()))
 			previousToken.addMisc(MiscKeys.NEW_PAR, MiscValues.YES);//previousToken.misc.add("NewPar=Yes");
@@ -546,9 +590,12 @@ public class MorphoTransformator {
 					null, "N/a", false);
 			nextToken.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPACING);//nextToken.misc.add("CorrectionType=Spacing,Spelling");
 			nextToken.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPELLING);//nextToken.misc.add("CorrectionType=Spacing,Spelling");
+			nextToken.feats.add(UDv2Feat.TYPO_YES);
 			if (PmlIdUtils.isParaBorderBetween(forNexTok.peek().getId(), forNexTok.poll().getId()))
 				nextToken.addMisc(MiscKeys.NEW_PAR, MiscValues.YES);//nextToken.misc.add("NewPar=Yes");
-			nextToken.setParentDeps(previousToken, UDv2Relations.GOESWITH, true, true);
+			nextToken.setHead(previousToken, UDv2Relations.GOESWITH, true,
+					true, params.NO_EDEP_DUPLICATES);
+			previousToken.addMisc(MiscKeys.CORRECT_SPACE_AFTER, MiscValues.NO);
 			previousToken = nextToken;
 		}
 
@@ -558,8 +605,8 @@ public class MorphoTransformator {
 
 	/**
 	 * Helper method: Create necessary CoNLL table entries for mNode where
-	 * source text from w level does not match the wordworm and the only
-	 * form_change is "spell".
+	 * source text from w level is split with missing spaces?
+	 * Is this used?
 	 * @param aNode				PML A-level node for which CoNLL entry must be
 	 *                          created
 	 * @param previousToken		the token after which should follow all newmade
@@ -568,6 +615,7 @@ public class MorphoTransformator {
 	 *                          token.
 	 * @return last token made
 	 */
+	@Deprecated
 	protected Token transfOnAddedSpaces(PmlANode aNode, Token previousToken, boolean paragraphChange)
 	{
 		String lvtbAId = aNode.getId();
@@ -585,11 +633,16 @@ public class MorphoTransformator {
 				lvtbAId, source, mLemma, lvtbTag, true);
 		if (!mForm.equals(source))
 		{
-			res.addMisc(MiscKeys.CORRECTED_FORM, mForm);//res.misc.add("CorrectedForm="+mForm);
+			res.addMisc(MiscKeys.CORRECT_FORM, mForm);//res.misc.add("CorrectedForm="+mForm);
 			res.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPELLING);//res.misc.add("CorrectionType=Spelling");
+			res.feats.add(UDv2Feat.TYPO_YES);
 		}
 		res.addMisc(MiscKeys.CORRECTION_TYPE, MiscValues.SPACING);
-		if (noSpaceAfter) res.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO);//res.misc.add("SpaceAfter=No");
+		if (noSpaceAfter)
+		{
+			res.addMisc(MiscKeys.SPACE_AFTER, MiscValues.NO);//res.misc.add("SpaceAfter=No");
+			res.addMisc(MiscKeys.CORRECT_SPACE_AFTER, MiscValues.YES);
+		}
 		if (paragraphChange || wNodes != null && wNodes.size() > 1 &&
 				hasParaChange(wNodes.get(0), wNodes.get(wNodes.size() -1)))
 			res.addMisc(MiscKeys.NEW_PAR, MiscValues.YES);//res.misc.add("NewPar=Yes");
@@ -607,19 +660,19 @@ public class MorphoTransformator {
 			int tokenIdBegin, int tokenIdDecimal, String pmlId,
 			String form, String lvtbLemma, String lvtbTag, boolean representative)
 	{
-		String uLemma = LemmaLogic.getULemma(lvtbLemma, lvtbTag, logger);
+		String uLemma = LemmaLogic.getULemma(lvtbLemma, lvtbTag);
 		Token resTok = new Token(tokenIdBegin, form, uLemma,
 				lvtbTag == null ? null : XPosLogic.getXpostag(lvtbTag));
 		if (tokenIdDecimal > 0) resTok.idSub = tokenIdDecimal;
 		if (params.ADD_NODE_IDS && pmlId != null && !pmlId.isEmpty())
 		{
 			resTok.addMisc(MiscKeys.LVTB_NODE_ID, pmlId);//resTok.misc.add("LvtbNodeId=" + pmlId);
-			logger.addIdMapping(s.id, resTok.getFirstColumn(), pmlId);
+			StandardLogger.l.addIdMapping(s.id, resTok.getFirstColumn(), pmlId);
 		}
 		if (resTok.xpostag != null)
 		{
-			resTok.upostag = UPosLogic.getUPosTag(resTok.form, lvtbLemma, resTok.xpostag, logger);
-			resTok.feats = FeatsLogic.getUFeats(resTok.form, lvtbLemma, resTok.xpostag, logger);
+			resTok.upostag = UPosLogic.getUPosTag(resTok.form, lvtbLemma, resTok.xpostag);
+			resTok.feats = FeatsLogic.getUFeats(resTok.form, lvtbLemma, resTok.xpostag);
 		}
 		s.conll.add(resTok);
 		if (representative) s.pmlaToConll.put(pmlId, resTok);
@@ -640,7 +693,7 @@ public class MorphoTransformator {
 				firstId, lastId);
 		if (innerParaChange == null)
 		{
-			logger.doInsentenceWarning(String.format(
+			StandardLogger.l.doInsentenceWarning(String.format(
 					"Node id \"%s\" or \"%s\" does not match paragraph searching pattern!",
 					firstId, lastId));
 			return false;
@@ -669,8 +722,18 @@ public class MorphoTransformator {
 	{
 		for (Token t : s.conll)
 		{
-			t.upostag = UPosLogic.getPostsyntUPosTag(t, logger);
-			t.feats = FeatsLogic.getPostsyntUPosTag(t, s.conll, logger);
+			t.upostag = UPosLogic.getPostsyntUPosTag(t);
+			t.feats = FeatsLogic.getPostsyntUPosTag(t, s.conll);
 		}
+	}
+
+	/**
+	 * Return true if lemma matches one of for "standard" auxiliary verbs:
+	 * būt, tikt, tapt, kļūt. For legacy reasons also mach negated lemmas.
+	 */
+	public static boolean isTrueAux (String lemma)
+	{
+		if (lemma == null) return false;
+		return lemma.matches("(ne)?(būt|tikt|tapt|kļūt)");
 	}
 }

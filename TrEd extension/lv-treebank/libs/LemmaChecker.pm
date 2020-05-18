@@ -8,15 +8,15 @@ sub checkLemmaByTag
 {
 	my $lemma = shift;
 	my $tag = shift;
-	return 0 unless ($tag and $lemma);
-	return 0 if ($tag =~ m#^[Nn]/[Aa]$#);
+	return [] unless ($tag and $lemma);
+	return [] if ($tag =~ m#^[Nn]/[Aa]$#);
 	my @errors = ();
 	
 	# TODO update accordingly linguist feedback.
 	push @errors, 'Lemma should contain an upercase letter?' if ($tag =~ /^np.*/ and $lemma !~ /\p{Lu}/);
 	push @errors, 'Lemma should contain a punctuation symbol?' if ($tag =~ /^z.*/ and $lemma !~ /\p{P}/);
-	push @errors, 'Lemma must be lowercase!' if ($tag =~ /^nc.*/ and $lemma !~ /^-?\p{Ll}+(-\p{Ll}+)*-?$/);
-	push @errors, 'Lemma must be lowercase!' if ($tag =~ /^(?!n|x|y|z).*/ and $lemma !~ /^\p{Ll}+$/);
+	push @errors, 'Lemma must be lowercase!' if ($tag =~ /^(nc|i).*/ and $lemma !~ /^-?\p{Ll}+(-\p{Ll}+)*-?$/);
+	push @errors, 'Lemma must be lowercase!' if ($tag =~ /^(?!n|x|y|z|i).*/ and $lemma !~ /^\p{Ll}+$/);
 	# Needed for UD
 	#push @errors, 'Lemma must be lowercase!' if ($tag =~ /^s.*/ and $lemma !~ /^\p{Ll}+$/);
 	# Needed for UD

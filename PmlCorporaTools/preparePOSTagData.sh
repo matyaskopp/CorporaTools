@@ -41,7 +41,8 @@ done
 echo "Knitting - start"
 time perl -e "use LvCorporaTools::PMLUtils::Knit qw(processDir); processDir(@ARGV)" $pmlFolder m "../TrEd extension/lv-treebank/resources" >/dev/null
 echo "Knitting - done"
-rm $pmlFolder/*.[m,w]
+rm $pmlFolder/*.m
+rm $pmlFolder/*.w
 
 # We use a predefined file split between train/dev/test
 while IFS=$'\t' read -r -a entry
@@ -59,7 +60,7 @@ do
 		mv "$pmlFolder/res/$file.pml" "$pmlFolder/train" || true;
 	elif [ $type = "skip" ]; then
 		echo "skipping $file"
-		rm "$pmlFolder/res/$file.pml"
+		rm "$pmlFolder/res/$file.pml" || true
 	else 
 		echo "$file has bad type"
 	fi

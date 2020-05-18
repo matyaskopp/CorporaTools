@@ -1,6 +1,5 @@
 package lv.ailab.lvtb.universalizer.pml;
 
-import lv.ailab.lvtb.universalizer.utils.Logger;
 import java.util.List;
 
 /**
@@ -97,10 +96,9 @@ public interface PmlANode
 	/**
 	 * Find reduction field value, split in tag and lemma, and then induce lemma
 	 * with the help of morphological analyzer.
-	 * @param logger	where to print errors
 	 * @return	reduction lemma
 	 */
-	public String getReductionLemma(Logger logger);
+	public String getReductionLemma();
 	/**
 	 * Find ord value for this node, if there is one.
 	 * @return	ord value, or 0, if no ord found, or null if node is null
@@ -170,6 +168,13 @@ public interface PmlANode
 	 */
 	public PmlANode getDescendant(String id);
 	/**
+	 * Find this or descendant node by given ID (thus, no phrase nodes will be
+	 * found)
+	 * @param id	an ID to search
+	 * @return	first node found
+	 */
+	public PmlANode getThisOrDescendant(String id);
+	/**
 	 * Get any descendants of any type. Root is not included.
 	 * @return	descendant list
 	 */
@@ -187,13 +192,29 @@ public interface PmlANode
 	 * @return	descendant list sorted by ord values
 	 */
 	public List<PmlANode> getDescendantsWithOrdAndM();
+
 	/**
-	 * Find ellipsis in the subtree headed by this node. Parameter allows to
-	 * find either all ellipsis or only leaf nodes.
+	 * Find pure ellipsis (no corresponding token) in the subtree headed by this
+	 * node. Parameter allows to find either all ellipsis or only leaf nodes.
 	 * @param leafsOnly	if true, only leaf nodes are returned
 	 * @return	list of ellipsis nodes in no particular order
 	 */
-	public List<PmlANode> getEllipsisDescendants(boolean leafsOnly);
+	public List<PmlANode> getPureEllipsisDescendants(boolean leafsOnly);
+	/**
+	 * Find ellipsis nodes with corresponding token in the subtree headed by
+	 * this node. Parameter allows to find either all ellipsis or only leaf
+	 * nodes.
+	 * @param leafsOnly	if true, only leaf nodes are returned
+	 * @return	list of ellipsis nodes in no particular order
+	 */
+	public List<PmlANode> getMorphoEllipsisDescendants(boolean leafsOnly);
+
+	/**
+	 * Find nodes having m-token, form_change "insert" and no w-token.
+	 * @return list of inserted token nodes in no particular order
+	 */
+	public List<PmlANode> getInsertedMorphoDescendants();
+
 	/**
 	 * Find parent or the closest ancestor, that is not coordination phrase or
 	 * crdPart node.
@@ -217,11 +238,23 @@ public interface PmlANode
 	 */
 	public boolean isSameNode(PmlANode other);
 
+	/**
+	 * Returns the lenght of the shortest path connecting this node and root.
+	 * @return	0 for root node, 1 for root's dependents and constituents, 2 for
+	 * 			for their dependents and constituents, etc.
+	 */
+	public Integer getDepthInTree();
+
 	//=== Tree modification ====================================================
 	/**
 	 * Remove this node from tree.
 	 */
 	public void delete();
+	/**
+	 * Remove this nodes m-node.
+	 */
+	public void deleteM();
+
 	/**
 	 * Set a phraseTag for X or COORD node, return false for other node types.
 	 * @param tag	tag value to set
@@ -235,6 +268,23 @@ public interface PmlANode
 	 * @return	true if tag was set
 	 */
 	public boolean setReductionTag(String tag);
+
+	/**
+	 * Set a reduction form, if there is none, return false otherwise.
+	 * @param form	form value to set
+	 * @return	true if form was set
+	 */
+	public boolean setReductionForm(String form);
+
+	/**
+	 * Split nonempty ellipsis node into empty ellipsis node and dependant
+	 * child.
+	 * @param idPostfix	string to append to the node ID to create ID for new
+	 *                  node.
+	 * @return	if an actual split was done
+	 */
+	public boolean splitMorphoEllipsis(String idPostfix);
+
 
 	/**
 	 * Distinguished node types. Logic-wise, ROOT is a subtlype of NODE.

@@ -1,9 +1,11 @@
 package lv.ailab.lvtb.universalizer.transformator;
 
+import lv.ailab.lvtb.universalizer.conllu.UDv2Relations;
 import lv.ailab.lvtb.universalizer.pml.PmlANode;
 import lv.ailab.lvtb.universalizer.transformator.morpho.MorphoTransformator;
-import lv.ailab.lvtb.universalizer.transformator.syntax.*;
-import lv.ailab.lvtb.universalizer.utils.Logger;
+import lv.ailab.lvtb.universalizer.transformator.syntax.EllipsisPreprocessor;
+import lv.ailab.lvtb.universalizer.transformator.syntax.NewSyntaxTransformator;
+import lv.ailab.lvtb.universalizer.utils.Tuple;
 
 /**
  * Logic for transforming LVTB sentence annotations to UD.
@@ -20,20 +22,18 @@ public class SentenceTransformEngine
 {
 	public Sentence s;
 	protected MorphoTransformator morphoTransf;
-	protected TreesyntaxTransformator syntTransf;
-	protected GraphsyntaxTransformator enhSyntTransf;
-	protected Logger logger;
+	protected EllipsisPreprocessor ellipPreproc;
+	protected NewSyntaxTransformator syntTransf;
 	protected TransformationParams params;
 
 	public SentenceTransformEngine(
-			PmlANode pmlTree, TransformationParams params, Logger logger)
+			PmlANode pmlTree, TransformationParams params)
 	{
 		s = new Sentence(pmlTree);
-		this.logger = logger;
 		this.params = params;
-		morphoTransf = new MorphoTransformator(s, params, logger);
-		syntTransf = new TreesyntaxTransformator(s, params, logger);
-		enhSyntTransf = new GraphsyntaxTransformator(s, logger);
+		ellipPreproc = new EllipsisPreprocessor(s);
+		morphoTransf = new MorphoTransformator(s, params);
+		syntTransf = new NewSyntaxTransformator(s, params);
 	}
 
 	/**
@@ -49,21 +49,42 @@ public class SentenceTransformEngine
 	{
 		if (params.DEBUG) System.out.printf("Working on sentence \"%s\".\n", s.id);
 
+		if (params.TURN_INSERTED_WORD_ELLIPSIS) ellipPreproc.replaceInsertedWords();
+		if (params.SPLIT_NONEMPTY_ELLIPSIS) ellipPreproc.splitTokenEllipsis();
 		morphoTransf.transformTokens();
-		logger.flush();
+		StandardLogger.l.flush();
 		morphoTransf.extractSendenceText();
-		logger.flush();
-		boolean noMoreEllipsis = syntTransf.preprocessEmptyEllipsis();
+		StandardLogger.l.flush();
+		boolean noMoreEllipsis = ellipPreproc.removeAllChildlessEllipsis();
 		if (params.WARN_ELLIPSIS && !noMoreEllipsis)
 			System.out.printf("Sentence \"%s\" has non-trivial ellipsis.\n", s.id);
-		syntTransf.transformBaseSyntax();
-		logger.flush();
-		enhSyntTransf.transformEnhancedSyntax();
-		logger.flush();
+		syntTransf.prepare();
+		syntTransf.transform();
+		syntTransf.aftercare();
+		StandardLogger.l.flush();
 		morphoTransf.transformPostsyntMorpho();
-		//logger.finishSentenceNormal(s.hasFailed);
-		logger.finishSentenceNormal();
-		//return !s.hasFailed;
+		StandardLogger.l.finishSentenceNormal();
+		/*try
+		{
+			Transformer transformer = TransformerFactory.newInstance().newTransformer();
+
+			// Uncomment if you do not require XML declaration
+			// transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
+
+			//A character stream that collects its output in a string buffer,
+			//which can then be used to construct a string.
+			StringWriter writer = new StringWriter();
+
+			//transform document to string
+			transformer.transform(new DOMSource(((XmlDomANode)s.pmlTree).domNode), new StreamResult(writer));
+
+			String xmlString = writer.getBuffer().toString();
+			System.out.println(xmlString);						//Print to console or logs
+		}
+		catch (Exception e)
+		{
+			e.printStackTrace();
+		}*/
 	}
 
 	/**
@@ -73,28 +94,30 @@ public class SentenceTransformEngine
 	 * @param pmlTree	tree to transform
 	 * @param params	transformation parameters
 	 * @return 	UD tree in CoNLL-U format or null if tree could not be
-	 * 			transformed.
+	 * 			transformed paired with stats about dep roles (basic dependency
+	 * 			'dep' first, then ehnhanced dependency 'dep').
 	 */
-	public static String treeToConll(
-			PmlANode pmlTree, TransformationParams params, Logger logger)
+	public static Tuple<String, Tuple<Integer, Integer>> treeToConll(
+			PmlANode pmlTree, TransformationParams params)
 	{
 		String id ="<unknown>";
 		try {
-			SentenceTransformEngine t = new SentenceTransformEngine(pmlTree, params, logger);
+			SentenceTransformEngine t = new SentenceTransformEngine(pmlTree, params);
 			id = t.s.id;
 			t.transform();
-			return t.s.toConllU();
+			return Tuple.of(t.s.toConllU(),
+					Tuple.of(t.s.countUdBaseRole(UDv2Relations.DEP), t.s.countUdEnhRole(UDv2Relations.DEP)));
 		} catch (NullPointerException|IllegalArgumentException e)
 		{
 			System.err.println("Transforming sentence " + id + " completely failed! Check structure and try again.");
 			e.printStackTrace();
-			logger.finishSentenceWithException(id, e, false);
+			StandardLogger.l.finishSentenceWithException(id, e, false);
 		}
 		catch (IllegalStateException e)
 		{
 			System.err.println("Transforming sentence " + id + " completely failed! Might be algorithmic error.");
 			e.printStackTrace();
-			logger.finishSentenceWithException(id, e, false);
+			StandardLogger.l.finishSentenceWithException(id, e, false);
 		}
 		return null;
 	}

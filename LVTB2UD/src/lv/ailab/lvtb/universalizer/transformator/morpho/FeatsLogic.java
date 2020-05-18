@@ -3,7 +3,6 @@ package lv.ailab.lvtb.universalizer.transformator.morpho;
 import lv.ailab.lvtb.universalizer.conllu.Token;
 import lv.ailab.lvtb.universalizer.conllu.UDv2Feat;
 import lv.ailab.lvtb.universalizer.conllu.UDv2Relations;
-import lv.ailab.lvtb.universalizer.utils.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,6 +10,7 @@ import java.util.List;
 /**
  * Logic for obtaining Universal Dependency feature information based on LVTB
  * information.
+ * TODO: atšķirīga uzvedība, ja logger ir null - izdrukā konsolē. Kāpēc?
  * Created on 2016-04-20.
  * @author Lauma
  */
@@ -18,11 +18,9 @@ public class FeatsLogic
 {
 	/**
 	 * Use this to obtain FEATS, if no syntactic information is available.
-	 * @param logger	Logger object used to collect warnings; if null,
-	 *                  System.out is used
 	 */
 	public static ArrayList<UDv2Feat> getUFeats(
-			String form, String lemma, String xpostag, Logger logger)
+			String form, String lemma, String xpostag)
 	{
 		ArrayList<UDv2Feat> res = new ArrayList<>();
 		if (lemma == null) lemma = ""; // To avoid null pointer exceptions.
@@ -43,9 +41,9 @@ public class FeatsLogic
 		if (xpostag.matches("[na]...l.*|v..p...l.*|[pm]....l.*")) res.add(UDv2Feat.CASE_LOC);
 		if (xpostag.matches("[na]...v.*|v..p...v.*")) res.add(UDv2Feat.CASE_VOC);
 
-		if (xpostag.matches("a.....n.*|v..p......n.*")) res.add(UDv2Feat.DEFINITE_IND);
+		if (xpostag.matches("a....n.*|v..p......n.*")) res.add(UDv2Feat.DEFINITE_IND);
 		if (xpostag.matches("mo.*") && lemma.matches("(treš|ceturt|piekt|sest|septīt|astot|devīt)[sa]")) res.add(UDv2Feat.DEFINITE_SPEC);
-		if (xpostag.matches("a.....y.*|v..p......y.*")) res.add(UDv2Feat.DEFINITE_DEF);
+		if (xpostag.matches("a....y.*|v..p......y.*")) res.add(UDv2Feat.DEFINITE_DEF);
 		if (xpostag.matches("mo.*") && !lemma.matches("(treš|ceturt|piekt|sest|septīt|astot|devīt)[sa]")) res.add(UDv2Feat.DEFINITE_DEF);
 
 		//if (xpostag.matches("a.....p.*|rp.*|v.ypd.*")) res.add(UDv2Feat.DEGREE_POS);
@@ -78,9 +76,9 @@ public class FeatsLogic
 		if (xpostag.matches("v..pd...ap.*")) res.add(UDv2Feat.ASPECT_IMP);
 		if (xpostag.matches("v..pd....s.*")) res.add(UDv2Feat.ASPECT_PERF);
 
-		if (xpostag.matches("v..[^p].....a.*|v..p.....a.*")) res.add(UDv2Feat.VOICE_ACT);
+		if (xpostag.matches("v..[^p].....a.*|v..p....a.*")) res.add(UDv2Feat.VOICE_ACT);
 		if (xpostag.matches("a.*") && lemma.matches(".*?oš[sa]")) res.add(UDv2Feat.VOICE_ACT); // Some deverbal adjectives slip unmarked.
-		if (xpostag.matches("v..[^p].....p.*|v..p.....p.*")) res.add(UDv2Feat.VOICE_PASS); // Some deverbal adjectives slip unmarked.
+		if (xpostag.matches("v..[^p].....p.*|v..p....p.*")) res.add(UDv2Feat.VOICE_PASS); // Some deverbal adjectives slip unmarked.
 
 		if (xpostag.matches("v..i.*")) res.add(UDv2Feat.EVIDENT_FH);
 		if (xpostag.matches("v..r.*")) res.add(UDv2Feat.EVIDENT_NFH);
@@ -103,10 +101,10 @@ public class FeatsLogic
 		//if (xpostag.matches("is.*") && lemma.matches("n[eē]")) res.add(UDv2Feat.POLARITY_NEG);
 
 		// Lexical features
-		if (xpostag.matches("p[ps].*")) res.add(UDv2Feat.PRONTYPE_PRS);
+		if (xpostag.matches("p[psx].*")) res.add(UDv2Feat.PRONTYPE_PRS);
 		if (xpostag.matches("a.*") && lemma.matches("(man|mūs|tav|jūs|viņ|sav)ēj(ais|ā)"))
 			res.add(UDv2Feat.PRONTYPE_PRS);
-		if (xpostag.matches("px.*")) res.add(UDv2Feat.PRONTYPE_RCP);
+		//if (xpostag.matches("px.*")) res.add(UDv2Feat.PRONTYPE_RCP);
 		if (xpostag.matches("pq.*")) res.add(UDv2Feat.PRONTYPE_INT);
 		if (xpostag.matches("r0.*") && lemma.matches("(ne)?(cik|kad|kā|kurp?|kāpēc|kādēļ|kālab(ad)?)"))
 			res.add(UDv2Feat.PRONTYPE_INT);
@@ -147,13 +145,12 @@ public class FeatsLogic
 	 * Use this to obtain FEATS, if syntactic information is available.
 	 * @param sentence	conll table with tokens in this sentence - this will be
 	 *                  used to find children of the given token
-	 * @param logger	Logger object used to collect warnings; if null,
-	 *                  System.out is used
 	 */
 	public static ArrayList<UDv2Feat> getPostsyntUPosTag(
-			Token token, List<Token> sentence, Logger logger)
+			Token token, List<Token> sentence)
 	{
-		ArrayList<UDv2Feat> res = getUFeats(token.form, token.lemma, token.xpostag, logger);
+		ArrayList<UDv2Feat> res = getUFeats(token.form, token.lemma, token.xpostag);
+		if (token.feats.contains(UDv2Feat.TYPO_YES)) res.add(UDv2Feat.TYPO_YES);
 		String xpostag = token.xpostag == null ? "" : token.xpostag; // To avoid null pointer exeption. But should we?
 		String lemma = token.lemma == null ? "" : token.lemma; // To avoid null pointer exeption. But should we?
 		if (!(xpostag.matches("n.*") && lemma.matches("kuriene|t(ur|ej)iene|vis(ur|ad)iene|nek(ur|ad)iene")) &&

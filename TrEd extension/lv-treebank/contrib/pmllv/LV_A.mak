@@ -70,7 +70,7 @@ sub swich_styles_full
 	$st =~ s/-full//;
   } else
   {
-	$st =~ s/^lv-a/lv-a-full/;
+	$st =~ s/^(lv-a(-edit)?)/$1-full/;
   }
   SetCurrentStylesheet($st) if StylesheetExists($st);
 }
@@ -110,9 +110,39 @@ sub get_lemma_errors
 	return LemmaChecker::checkLemmaByTag(@_);
 }
 
+sub get_all_morphomorpho_errors
+{
+   my $node = shift;
+   my @res = ();
+   push @res, @{get_lemma_errors($node->attr('m/lemma'), $node->attr('m/tag'))};
+   push @res, @{get_tag_errors($node->attr('m/tag'))};
+   return \@res;
+}
+
+sub get_all_morphosynt_errors
+{
+   my $node = shift;
+   my @res = ();
+   push @res, @{get_tag_errors($node->attr('tag'))};
+   push @res, @{get_tag_errors($node->attr('reduction'))};
+   push @res, @{get_tag_for_xType_errors($node->attr('tag'),$node->attr('xtype')) }
+	 if ($node->attr('#name') eq 'xinfo');
+   return \@res;
+}
+
 sub get_structural_errors
 {
-	return SyntaxChecker::get_structural_errors(@_, $root);
+	return SyntaxChecker::get_structural_errors(@_);
+}
+
+sub get_all_errors
+{
+   my $node = shift;
+   my @res = ();
+   push @res, @{get_all_morphomorpho_errors($node)};
+   push @res, @{get_all_morphosynt_errors($node)};
+   push @res, @{get_structural_errors($node)};
+   return \@res;
 }
 
 sub has_nondep_child

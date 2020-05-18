@@ -334,7 +334,7 @@ our %phraseTypes2TagParts = (
 'xPrep'     => ['pre', 'post', 'rel',],
 'xParticle' => ['aff', 'neg',],
 'xApp'      => ['agr', 'non',],
-'subrAnal'  => ['vv', 'ipv', 'skv', 'set', 'sal', 'part',],
+'subrAnal'  => ['vv', 'ipv', 'skv', 'set', 'sal'],
 );
 
 our $notRecognized = 'NOT RECOGNIZED';
@@ -479,6 +479,7 @@ sub getAVPairsFromAnyTag
 sub checkAnyTag
 {
 	my $tag = shift;
+	return [] unless ($tag);
 	my @avPairs = map {@$_} @{ getAVPairsFromAnyTag($tag) };
 	my @errors = ();
 	

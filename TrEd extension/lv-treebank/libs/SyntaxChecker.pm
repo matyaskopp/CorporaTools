@@ -75,9 +75,9 @@ sub get_structural_errors
   }
   
   if ($node->{'xtype'} eq 'xNum' or $node->{'xtype'} eq 'xApp'
-    or $node->{'xtype'} eq 'namedEnt' or $node->{'xtype'} eq 'unstruct'
-    or $node->{'xtype'} eq 'subrAnal' or $node->{'xtype'} eq 'coordAnal'
-    or $node->{'xtype'} eq 'phrasElem')
+    or $node->{'xtype'} eq 'xFunctor' or $node->{'xtype'} eq 'unstruct'
+    or $node->{'xtype'} eq 'namedEnt' or $node->{'xtype'} eq 'phrasElem'
+    or $node->{'xtype'} eq 'subrAnal' or $node->{'xtype'} eq 'coordAnal')
   {
     my $basElemCount = _count_children_with_with_role($node, 'basElem');
 	push @errors, 'Why would '.$node->{'xtype'}.' have so few basElem?'
@@ -137,22 +137,26 @@ sub is_unfinished
 sub is_role_allowed_for_parent
 {
   my $node = shift;
-  my $root = shift;
+  #my $root = shift;
   my $p = $node->parent;
 
   return 1 unless ($node and $p);
+  #return 1 if ($node eq $root);
+  
   
   # root children.
   if ($node->{'pmctype'} eq 'sent' or
       $node->{'pmctype'} eq 'utter')
   {
-    return 1 if ($p eq $root);
+    #return 1 if ($p eq $root);
+	return 1 unless ($p->parent);
 	return 1 if ($p->parent->{'pmctype'} eq 'dirSpPmc');
 	return 1 if ($p->parent->{'pmctype'} eq 'quot');
 	return 0;
   }
   
-  if ($p eq $root)
+  #if ($p eq $root)
+  unless ($p->parent)
   {
 	return 1 if ($node->{'pmctype'} eq 'sent' or
                  $node->{'pmctype'} eq 'utter' or
@@ -161,6 +165,7 @@ sub is_role_allowed_for_parent
 	return 0 if ($node->{'role'} eq 'punct' or
                  $node->{'role'} eq 'conj' or
                  $node->{'role'} eq 'pred' or
+                 $node->{'role'} eq 'subj' or
 				 $node->{'role'} eq 'basElem');
 	return 1 if ($node->{'#name'} eq 'node');
 	return 0;
@@ -195,7 +200,7 @@ sub is_role_allowed_for_parent
     return 1 if ($p->{'#name'} eq 'coordinfo');
 	return 0;
   }
-  # modal werbs and aux.werbs must be below xPred
+  # modal werbs and aux.verbs must be below xPred
   if ($node->{'role'} eq 'mod' or
       $node->{'role'} eq 'auxVerb')
   {
@@ -206,7 +211,8 @@ sub is_role_allowed_for_parent
   # punctuation must be below coordination or pmc or used for reduction.
   if ($node->{'role'} eq 'punct')
   {
-    return 0 if ($p eq $root);
+    #return 0 if ($p eq $root);
+    return 0 unless ($p->parent);
     return 1 if ($p->{'#name'} eq 'coordinfo' or
 				 $p->{'#name'} eq 'pmcinfo' or
 				 $node->{'reduction'});
@@ -231,22 +237,48 @@ sub is_role_allowed_for_parent
 				 $p->{'xtype'} eq 'xParticle');
 	return 0;
   }
-  # subjects, objects, atributes etc. can be either in dependency or in
+  
+  # subject's parent is something predicative
+  if ($node->{'role'} eq 'subj')
+  {
+	return 1 if ($p->{'role'} eq 'pred' or
+                 $p->{'role'} eq 'spc' or
+                 $p->{'role'} eq 'basElem' or
+				 $p->{'role'} eq 'crdPart' or
+				 $p->{'pmctype'} eq 'utter' or # Parcelaati.
+				 $p->{'pmctype'} eq 'ins');
+	return 0;
+  }
+  
+  # subject clause's parent is either subject or something predicative
+  if ($node->{'role'} eq 'subjCl')
+  {
+	return 1 if ($p->{'role'} eq 'subj' or
+                 $p->{'role'} eq 'pred' or
+                 $p->{'role'} eq 'spc' or
+                 $p->{'role'} eq 'basElem' or
+				 $p->{'role'} eq 'crdPart' or
+				 $p->{'pmctype'} eq 'utter' or # Parcelaati.
+				 $p->{'pmctype'} eq 'ins');
+	return 0;
+  }
+
+  # objects, atributes etc. can be either in dependency or in
   # insertion or in parenthesis
+  # NB! subjects are already procesed before this!
   foreach (@normalRoles, @clRoles) #@redRoles, 
   {
 	if ($node->{'role'} eq $_)
 	{
 	  return 1 if ($p->{'#name'} eq 'node' or
 				   $p->{'s.rf'} or
-				   #$p->{'pmctype'} eq 'sent' or
 				   $p->{'pmctype'} eq 'utter' or # Parcelaati.
 				   $p->{'pmctype'} eq 'ins');
 	  return 0;
 	}
   }
   # insertions, determinants and situants must be in dependency
-  foreach (@detRoles) 
+  foreach (@detRoles, 'repeat') 
   {
 	if ($node->{'role'} eq $_)
 	{
@@ -262,8 +294,10 @@ sub is_role_allowed_for_parent
 	{
 	  return 1 if ($p->{'pmctype'} eq $_);
 	}
+	return 1 if ($p->{'pmctype'} eq 'quot');
 	return 0;
   }
+  
   return 1;
 }
 
